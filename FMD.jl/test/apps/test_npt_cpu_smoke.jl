@@ -212,6 +212,11 @@ end
         cols = split(lines[end])
         @test length(cols) == 19
         @test isfinite(parse(Float64, cols[18]))
+        # The log is sampled at the end of the step (after the closing
+        # half-kick), so the last temperature is that of the returned
+        # velocities, up to the %15.8e print precision.
+        @test parse(Float64, cols[1]) ≈
+              FMD.Apps._report_temperature(out, FMD.Cores.SerialDomain()) rtol = 1e-7
         @test parse(Int, cols[end]) >= 0
         # The rattled fixture is not pre-relaxed, so an all-zero ncg
         # column can only mean the counter (or the CG) stopped working.

@@ -351,7 +351,8 @@ whole step, on the GPU in single precision, on top of the 1.7× Issue #153
 took off the full call). `conserved` is the
 diagnostic conserved quantity H′ of the active thermostat/barostat
 combination — monitor its drift to judge integration quality, not its
-absolute value (it is sampled mid-step at a consistent phase, and its
+absolute value (it is sampled at the end of each step, after the closing
+velocity half-kick, and its
 relative drift grows roughly linearly with step count — ~5e-9/step on
 the 64-atom test fixture at 1 fs — from the O(dt³)-per-step bookkeeping
 of the thermostat work accumulators; a jump or change of slope is the

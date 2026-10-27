@@ -356,14 +356,18 @@ function npt!(atoms::Atoms, params)
 
         calc_dipole_phys!(atoms, params, mfr_total)
 
+        @. atoms.arrays[:velo] += atoms.arrays[:forces]/atoms.arrays[:masses] * params[:timestep]/2
+        update!(atoms, th, baro, c, arrtyp)
+
         # IO -----------------------------------------------------------
         # kinetic_energy / dipole / conserved_energy are collective
         # (whole-system values on every rank); only the writes are
         # root-gated.
         temp = _report_temperature(atoms, dom)
-        # Sampled mid-step (after calculate!, between the two update!
-        # calls) at a consistent phase, so drift is measurable; see
-        # conserved_energy for when it is an actual invariant.
+        # Sampled at the end of the step, after the closing half-kick and
+        # update!, so velocities, positions, cell and the control
+        # variables all sit at the same time t+dt; see conserved_energy
+        # for when it is an actual invariant.
         conserved = conserved_energy(th, baro, atoms, c)
 
         if Cores.isroot(dom)
@@ -420,9 +424,6 @@ function npt!(atoms::Atoms, params)
                              Pg, pm.gridsize, atoms.info[:lattice]; step = step)
             end
         end
-
-        @. atoms.arrays[:velo] += atoms.arrays[:forces]/atoms.arrays[:masses] * params[:timestep]/2
-        update!(atoms, th, baro, c, arrtyp)
     end
 
     # A shadow XL-BOMD run that kept falling back was paying for the
