@@ -1,0 +1,6 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+FMD = "4196dbc5-4e03-43f4-9488-1228e23e1a38"
+
+[compat]
+Documenter = "1"

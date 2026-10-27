@@ -1,0 +1,33 @@
+.DS_Store
+docs/build
+Manifest.toml
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv*/
+python/.venv*/
+runs/
+
+# Test / job artifacts
+test/run_*.out
+core.*
+
+# example/training run artifacts (generated in place; train.xyz は同梱するので除外しない)
+example/training/input.xyz
+example/training/out_*/
+example/training/*.jld2
+example/training/parity_*.csv
+example/training/dfpt.xyz
+example/training/*.log
+
+# example/Retarget run artifacts (generated in place)
+example/Retarget/newref.xyz
+example/Retarget/residual.xyz
+example/Retarget/*.jld2
+example/Retarget/parity_*.csv
+example/Retarget/*.log
+
+# Claude Code (user-local settings)
+.claude/settings.local.json
