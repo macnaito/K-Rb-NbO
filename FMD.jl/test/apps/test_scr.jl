@@ -275,7 +275,7 @@ end
         lines = readlines(joinpath(dir, "log.txt"))
         @test length(lines) == 4
         cols = split(lines[end])
-        @test length(cols) == 19
+        @test length(cols) == 20
         @test isfinite(parse(Float64, cols[18]))
         @test parse(Int, cols[end]) >= 0
         # The rattled fixture is not pre-relaxed, so an all-zero ncg

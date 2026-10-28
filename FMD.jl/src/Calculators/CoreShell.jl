@@ -184,6 +184,15 @@ guard is `fcount < cgmaxiter` and the uphill-correction branch adds a
 second evaluation inside an iteration, so the returned value can reach
 `cgmaxiter + 1`.
 
+Also stores the rms of the shell-force components at loop exit in
+`atoms.info[:shell_residual_rms]` (1-element vector, a.u. Ha/Bohr — the
+units of `cgtol`),
+`sqrt(Σ F_s² / 3N)` over the same components the stopping test takes the
+maximum of. It is taken from the CG loop's own shell forces, before the
+full-stack core evaluation re-evaluates `:shellforces` at the same shell
+positions. The stopping test pins the maximum at `≈ cgtol`; the rms is
+what it leaves free.
+
 Reuses `nl` (built by the caller via [`neighborlist`](@ref)) and `coulomb`
 (an [`EwaldInfo`](@ref) or [`PMEInfo`](@ref) — `cellupdate!` is invoked
 internally so passing a stale `coulomb` after a cell change is safe).
@@ -239,6 +248,11 @@ function calculate!(::CoreShell, atoms::Atoms, nl::NeighborList, coulomb::Coulom
 
         max_force = _cg_maxabs(dom, arr[:shellforces])
     end
+
+    sumsq, _ = _cg_sum2(dom, _cg_ldot(arr[:shellforces], arr[:shellforces]), zero(FPPREC))
+    # 1-element vector, like :potential_energy: change_arrtyp converts every
+    # info value as an array.
+    atoms.info[:shell_residual_rms] = [sqrt(sumsq / (3 * Cores.n_global(dom, atoms)))]
 
     core_forces!(atoms, nl, coulomb, prms)
 
