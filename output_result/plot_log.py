@@ -7,7 +7,9 @@
 
 log.txt の列（FMD.jl/src/Apps/NPT.jl が毎ステップ 1 行書く）:
     temp(K) | lattice 9 成分(Å, 列優先) | dipole 3 (e·Å) | dipole_phys 3 (e·Å)
-    | volume(Å³) | conserved(Hartree) | ncg
+    | volume(Å³) | conserved(Hartree) | shell_rms(Ha/Bohr) | ncg
+shell_rms は 2026-10 に追加された列（シェル緩和 CG の停止時の残差の rms）．
+それより前の 19 列のログもそのまま読める（shell_rms は None になる）．
 """
 import json
 import math
@@ -16,17 +18,23 @@ from pathlib import Path
 
 HARTREE_EV = 27.211386245988
 E_PER_A2_TO_UC_PER_CM2 = 1602.176634  # 1 e/Å² = 1602.18 μC/cm²
+HA_PER_BOHR_TO_MEV_PER_A = 51422.0675  # 1 Ha/Bohr = 51.42 eV/Å
 ATOMS_PER_CELL = 5  # ペロブスカイト ABO3 の単位格子あたりの原子数
 
 
 def read_log(path):
+    """1 行 = [18 個の float..., ncg(int), shell_rms(float か None)]．
+
+    列の位置は r[0]〜r[17] と r[18] = ncg のまま変えない（古いスクリプトと互換）．
+    """
     rows = []
     with open(path) as f:
         for line in f:
             v = line.split()
-            if len(v) != 19:
-                continue
-            rows.append([float(x) for x in v[:18]] + [int(v[18])])
+            if len(v) == 19:      # shell_rms 列が入る前のログ
+                rows.append([float(x) for x in v[:18]] + [int(v[18]), None])
+            elif len(v) == 20:    # ... | conserved | shell_rms | ncg
+                rows.append([float(x) for x in v[:18]] + [int(v[19]), float(v[18])])
     if not rows:
         sys.exit(f"{path}: データ行がありません")
     return rows
@@ -78,6 +86,11 @@ def main():
     scale = HARTREE_EV * 1000 / n if n else HARTREE_EV
     dh = [(r[17] - h0) * scale for r in rows]
     ncg = [r[18] for r in rows]
+    # 残差の rms（XL-BOMD の shadow ステップは CG をしないので NaN）
+    rms = [r[19] for r in rows]
+    has_rms = all(x is not None and math.isfinite(x) for x in rms)
+    if any(x is not None for x in rms) and not has_rms:
+        print("note: shell_rms に NaN があるので（XL-BOMD など）残差のグラフは省略")
 
     charts = [
         dict(id="temp", title="温度", unit="K", series=[dict(name="温度", y=temp)],
@@ -94,6 +107,9 @@ def main():
         dict(id="ncg", title="シェル緩和の反復回数", unit="回",
              series=[dict(name="ncg", y=ncg)], integer=True),
     ]
+    if has_rms:
+        charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å",
+                           series=[dict(name="rms", y=[x * HA_PER_BOHR_TO_MEV_PER_A for x in rms])]))
     # 長い計算では HTML が重くなるので，最大 MAXPTS 点に間引く（等間隔）．
     # 有効数字も 7 桁に丸める（グラフと表には十分）
     MAXPTS = 2000
