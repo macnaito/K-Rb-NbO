@@ -27,6 +27,15 @@ using Random
         @test maximum(abs.(a.arrays[:shellforces])) < prms[:cgtol] * 100
         @test all(isfinite, a.arrays[:forces])
         @test all(isfinite, a.info[:potential_energy])
+        # shell_residual_rms is the CG loop's shell-only evaluation at the
+        # exit positions; the full-stack core evaluation re-derives
+        # :shellforces at the same positions through different kernels,
+        # so the two rms must agree to roundoff — and an rms can never
+        # exceed the maximum of the same components.
+        sf = a.arrays[:shellforces]
+        rms = a.info[:shell_residual_rms][1]
+        @test rms ≈ sqrt(sum(abs2, sf) / length(sf)) rtol = 1e-8
+        @test 0 < rms <= maximum(abs, sf)
     end
 
     @testset "tighter cgtol → at least as many CG iterations" begin

@@ -208,11 +208,15 @@ params, and the MLIP alike).
   [`_report_temperature`](@ref)), full lattice (9), `dipole` (3),
   gauge-fixed `dipole_phys` (3), `volume`, `conserved` (diagnostic H′ of
   the active control combination, see [`conserved_energy`](@ref)),
+  `shell_rms` (rms of the shell-force components left by this step's CG
+  relaxation, Ha/Bohr like `cgtol`; the stopping test bounds only their
+  maximum. NaN on a `shell_dynamics = :xlbomd` shadow step, which runs no
+  CG),
   `ncg` (dimensionless count: shell-relaxation force evaluations inside
   the CG loop, the [`calculate!`](@ref) return value, Issue #144. The
   initial shell evaluation and the core evaluation are not counted, so
   the per-step force-evaluation cost is `ncg + 1` shell + 1 core).
-  Units: K, Å, Å³, Hartree.
+  Units: K, Å, Å³, Hartree, Ha/Bohr.
 - `step_<n>.xyz` — extxyz snapshots every `output_interval` steps.
 - `polmap_<n>.txt` — when `polmap_interval` is set: the local polarization
   map every `polmap_interval` steps ([`write_polmap`](@ref) format; e/Å²,
@@ -372,14 +376,15 @@ function npt!(atoms::Atoms, params)
 
         if Cores.isroot(dom)
             open(joinpath(params[:output_dir], "log.txt"), ifelse(step == 1, "w", "a")) do io
-                # Columns: temp | lattice(9) | dipole(3) | dipole_phys(3) | volume | conserved | ncg
-                @printf(io, "%15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %6d \n",
+                # Columns: temp | lattice(9) | dipole(3) | dipole_phys(3) | volume | conserved | shell_rms | ncg
+                @printf(io, "%15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %6d \n",
                     temp,
                     (Matrix(atoms.info[:lattice]) .* UNITS[:Å])...,
                     (Vector(atoms.info[:dipole] .* UNITS[:Å]))...,
                     (Vector(atoms.info[:dipole_phys] .* UNITS[:Å]))...,
                     volume(atoms) * UNITS[:Å]^3,
                     conserved,
+                    Array(atoms.info[:shell_residual_rms])[1],
                     ncg)
             end
         end

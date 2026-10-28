@@ -532,8 +532,11 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     @test dlat < lattol
     # The collective log quantities (temp | lattice | dipole | dipole_phys
     # | volume | conserved) written by the root must match the serial log —
-    # step 1 tightly (minimal divergence), all steps loosely. The ncg
-    # column (19, Issue #144) is compared separately as a count: the CG
+    # step 1 tightly (minimal divergence), all steps loosely. Column 19,
+    # shell_rms, is left out of that comparison: it is the residual at the
+    # CG exit, so the one-iteration flip described next changes it by a
+    # whole CG contraction factor; it is only required finite. The ncg
+    # column (20, Issue #144) is compared separately as a count: the CG
     # branching is Allreduce-derived (identical across ranks), but serial
     # vs DD summation-order roundoff can flip one iteration right at the
     # cgtol threshold — and the uphill-correction branch counts two
@@ -543,11 +546,12 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     logref = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(ref.dir, "log.txt"))]
     logdd = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(dd_dir, "log.txt"))]
     @test length(logdd) == length(logref) == 6
-    @test all(length(logdd[i]) == length(logref[i]) == 19 for i in 1:6)
+    @test all(length(logdd[i]) == length(logref[i]) == 20 for i in 1:6)
     reldiff(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), 1e-8))
     @test reldiff(logdd[1][1:18], logref[1][1:18]) < 1e-6
     @test maximum(reldiff(logdd[i][1:18], logref[i][1:18]) for i in 1:6) < 1e-3
-    @test maximum(abs(logdd[i][19] - logref[i][19]) for i in 1:6) <= 2
+    @test all(isfinite(logdd[i][19]) for i in 1:6)
+    @test maximum(abs(logdd[i][20] - logref[i][20]) for i in 1:6) <= 2
     # The rebuild (→ migrate; on cuda a host round trip) path actually
     # fired: the initial build plus at least one mid-run rebuild, counted
     # by the child's logger (pre-#113: a stdout grep on the per-check
