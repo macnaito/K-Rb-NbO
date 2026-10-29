@@ -101,6 +101,55 @@ end
                                      label = "CoreShell relaxed core force (FD)")
 end
 
+@testset "CoreShell core force = -∂E/∂r at fixed shelldisp (CG residual left)" begin
+    # MD moves the cores at fixed :shelldisp, so the shells ride along and
+    # the force the integrator needs is the gradient of E at those frozen
+    # shells — F_core + F_shell — not the relaxed-surface force above. The
+    # two agree only when F_shell = 0, so a loose cgtol leaves a residual
+    # large enough to tell them apart.
+    Random.seed!(22)
+    atoms = make_nacl_8()
+    atoms.arrays[:pos] .+= 0.02 .* randn(size(atoms.arrays[:pos]))
+    prms = nacl_params(atoms; alpha = 0.40, ewald_tolerance = 1e-8,
+                       rc_factor = 0.45, with_shell = true)
+    prms = (; prms..., cgtol = FMD.FPPREC(1e-2), cgmaxiter = 300)
+
+    relaxed = deepcopy_atoms(atoms)
+    Calculators.calculate!(Calculators.CoreShell(), relaxed, prms)
+    Fs = copy(relaxed.arrays[:shellforces])
+    @test maximum(abs, Fs) > 1e-4          # the residual is really there
+
+    # Energy and force at the frozen shells: one full-stack pass, no CG,
+    # with the Ewald α the convenience calculate! substitutes.
+    prmsE = (; prms..., alpha = Calculators.ewaldcoeff(prms))
+    frozen! = b -> begin
+        nl = neighborlist(b, prmsE[:rc], prmsE[:skin])
+        Calculators.core_forces!(b, nl, Calculators.EwaldInfo(b.info[:lattice], prmsE), prmsE)
+        b.arrays[:forces] .+= b.arrays[:shellforces]
+    end
+    let b = deepcopy_atoms(relaxed)
+        _, F = evaluate(frozen!, b)
+        # calculate! returns exactly this force (same positions, same stack).
+        @test relaxed.arrays[:forces] ≈ F rtol = 1e-10 atol = 1e-14
+    end
+
+    assert_force_matches_finite_diff(frozen!, relaxed; h = 1e-4,
+                                     atom_indices = 1:length(relaxed), axes = (1, 2, 3),
+                                     rtol = 1e-3, atol = 1e-5,
+                                     label = "F_core + F_shell = -∂E/∂r|shelldisp (FD)")
+
+    # Sensitivity: the core force alone misses the residual by more than
+    # the FD tolerance, so the check above would catch dropping the term.
+    ilattice = inv(Array(relaxed.info[:lattice]))
+    i, ax = Tuple(argmax(abs.(Fs)))
+    δ = zeros(FMD.FPPREC, 3); δ[ax] = 1e-4
+    ap = deepcopy_atoms(relaxed); ap.arrays[:pos][i, :] .+= vec(δ' * ilattice)
+    am = deepcopy_atoms(relaxed); am.arrays[:pos][i, :] .-= vec(δ' * ilattice)
+    num = -(evaluate(frozen!, ap)[1] - evaluate(frozen!, am)[1]) / 2e-4
+    Fcore = relaxed.arrays[:forces][i, ax] - Fs[i, ax]
+    @test abs(Fcore - num) > 100 * (1e-5 + 1e-3 * abs(num))
+end
+
 @testset "linear_response! (CPU only)" begin
     atoms = make_nacl_64()
     prms = nacl_params(atoms; alpha = 0.30, ewald_tolerance = 1e-6,
