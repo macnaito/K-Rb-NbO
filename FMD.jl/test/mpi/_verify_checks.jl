@@ -535,7 +535,9 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     # step 1 tightly (minimal divergence), all steps loosely. Column 19,
     # shell_rms, is left out of that comparison: it is the residual at the
     # CG exit, so the one-iteration flip described next changes it by a
-    # whole CG contraction factor; it is only required finite. The ncg
+    # whole CG contraction factor; it is only required finite on every CG
+    # step and NaN exactly where the serial run logged one (a shadow
+    # XL-BOMD step has no CG, so no residual — see evaluate_forces!). The ncg
     # column (20, Issue #144) is compared separately as a count: the CG
     # branching is Allreduce-derived (identical across ranks), but serial
     # vs DD summation-order roundoff can flip one iteration right at the
@@ -550,7 +552,11 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     reldiff(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), 1e-8))
     @test reldiff(logdd[1][1:18], logref[1][1:18]) < 1e-6
     @test maximum(reldiff(logdd[i][1:18], logref[i][1:18]) for i in 1:6) < 1e-3
-    @test all(isfinite(logdd[i][19]) for i in 1:6)
+    @test all(isfinite(logdd[i][19]) == isfinite(logref[i][19]) for i in 1:6)
+    # NaN only on a step that ran no CG (ncg = 0), never as a stale or
+    # broken value on a CG step.
+    @test all(isfinite(logdd[i][19]) || (isnan(logdd[i][19]) && logdd[i][20] == 0) for i in 1:6)
+    @test isfinite(logdd[1][19])                 # step 1 is a CG step on every flavour
     @test maximum(abs(logdd[i][20] - logref[i][20]) for i in 1:6) <= 2
     # The rebuild (→ migrate; on cuda a host round trip) path actually
     # fired: the initial build plus at least one mid-run rebuild, counted

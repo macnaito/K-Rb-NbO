@@ -492,8 +492,13 @@ _lattice_a(out) = norm(Array(out.info[:lattice])[1, :]) / 2 * UNITS[:Å]
     @testset "start = $a_start Å" for a_start in (5.40, 5.90)
         atoms = make_nacl_64(; a_bohr = a_start / UNITS[:Å])
         mktempdir() do dir
+            # stol well below the probe's 1e-7: the PME relaxation and the
+            # Ewald probe differ by ~7e-8 at this mesh, so at stol = 1e-7
+            # the probe passed or failed on where FIRE happened to stop in
+            # the ±stol band (a 1e-8 change of the core force flipped it).
             out, converged = relax!(deepcopy_atoms(atoms),
-                                    _cell_params(atoms, dir; cell_dof = :iso))
+                                    _cell_params(atoms, dir; cell_dof = :iso,
+                                                 stol = FMD.FPPREC(1e-8)))
             @test converged
             @test isapprox(_lattice_a(out), a_energy; atol = 1e-3)
             # Independent verification: the converged stress, re-evaluated
