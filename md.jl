@@ -1,5 +1,5 @@
 # (K,Rb)NbO₃ の NPT-MD (殻模型 + ACE)．熱浴 Nosé–Hoover，圧力浴 MTTK (Parrinello–Rahman 型の可変セル)．
-#   julia --project=<FMD の入った環境> md.jl
+#   julia -t auto --project=FMD.jl md.jl   (Mac ローカル実行: CPU バックエンド，-t でスレッド並列)
 # input.xyz: 理想立方の 8×8×8 セル (2,560 原子)，A サイトの 51/512 (x ≈ 0.10) を乱択で Rb にしたもの
 using FMD
 using FMD: UNITS
@@ -12,7 +12,7 @@ params = (;
      pot...,
      output_dir = "out",
      input = "input.xyz",
-     backend = :cuda,             # GPU が無ければ :cpu
+     backend = :cpu,              # Mac (GPU 無し) で実行．GPU クラスタでは :cuda
      pme_meshsize = 1.0,
      efield = [0.0, 0.0, 0.0],
      cgtol = 1e-6,
