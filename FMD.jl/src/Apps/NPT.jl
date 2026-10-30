@@ -62,7 +62,7 @@ buffer.)
 Note: with the total momentum pinned to zero the mass-weighted fractional
 COM is a constant of motion, so the sampled configurational measure is
 V^(N−1) and the barostats target the Gamma(N) ideal-gas volume marginal
-(docs/src/theory/scr-barostat.md). The NoseHoover/CSVR targets (3N−3)
+(docs/src/theory/scr-barostat.md). The NoseHoover/NoseHooverChain/CSVR targets (3N−3)
 must stay consistent with this call; the SCR measure correction in
 `_scr_mu` is independent of the DOF count by construction, but the
 Gamma(N) test expectations in test_scr.jl do assume it.
@@ -160,7 +160,9 @@ params, and the MLIP alike).
   makes runs reproducible — identical input gives an identical trajectory;
   pass a distinct seed per run for statistically independent replicas
   (e.g. umbrella windows).
-- `:thermostat` — `:nh` (Nosé–Hoover, default), `:csvr` ([`CSVR`](@ref)
+- `:thermostat` — `:nh` (Nosé–Hoover, default), `:nhc`
+  ([`NoseHooverChain`](@ref); chain length `:nhc_length`, default 3),
+  `:csvr` ([`CSVR`](@ref)
   stochastic velocity rescaling; requires `:seed` and a positive target
   temperature) or `:none`.
 - `:barostat` — `:mttk` ([`MTTK`](@ref), default), `:scr` ([`SCR`](@ref)
@@ -221,7 +223,7 @@ params, and the MLIP alike).
 
 Returns the final `Atoms` (on the selected backend).
 
-See also: [`update!`](@ref), [`MTTK`](@ref), [`NoseHoover`](@ref),
+See also: [`update!`](@ref), [`MTTK`](@ref), [`NoseHoover`](@ref), [`NoseHooverChain`](@ref),
 [`scale_cell!`](@ref), [`conserved_energy`](@ref), [`apply_mlip!`](@ref),
 [`build_mlip_nlists`](@ref), [`_resolve_mlip`](@ref).
 """
@@ -481,7 +483,7 @@ loaded from `SplineP.jld2` or `ACEP.jld2` (the
 | Key | Default | Meaning |
 |---|---|---|
 | `nsteps` | `1000` | MD steps |
-| `thermostat` | `:nh` | Particle thermostat (`:nh`, `:csvr` or `:none`) |
+| `thermostat` | `:nh` | Particle thermostat (`:nh`, `:nhc`, `:csvr` or `:none`) |
 | `barostat` | `:mttk` | Barostat (`:mttk`, `:scr` or `:none` = fixed cell) |
 | `seed` | `0` | Initial-velocity RNG seed |
 | `cgtol`, `cgmaxiter` | `2e-5`, `30` | Per-step shell relaxation |
