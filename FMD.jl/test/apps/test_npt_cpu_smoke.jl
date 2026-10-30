@@ -240,7 +240,7 @@ end
     # unknown selections and a missing τ for the active method fail
     # loudly before any MD state is touched.
     mktempdir() do dir
-        @test_throws "must be :nh, :csvr or :none" npt!(deepcopy_atoms(atoms),
+        @test_throws "must be :nh, :nhc, :csvr or :none" npt!(deepcopy_atoms(atoms),
             (; common..., tau_t = 20dt, tau_p = 500dt, thermostat = :berendsen,
               output_dir = dir))
         @test_throws "must be :mttk, :scr or :none" npt!(deepcopy_atoms(atoms),
