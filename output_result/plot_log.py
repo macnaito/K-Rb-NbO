@@ -4,6 +4,12 @@
 使い方（KNO フォルダで）:
     python3 plot_log.py                 # out/log.txt → out/log_plot.html
     python3 plot_log.py out2/log.txt    # 別の出力フォルダ
+    python3 plot_log.py out/log.txt --thermostat nhc --dt 0.5 --cgtol 1e-6   # 見出しの条件を指定
+
+ページの見出し（<title> と <h1>）は「サーモスタット,dtfs,cgtol」（例: nhc,0.5fs,1e-6）．
+条件は出力フォルダ名 out_<thermostat>_<dt>fs_<cgtol>_… から読み（例: out_nhc_0.5fs_1e-6_10ps．
+サーモスタット名の前の目印は無視: out_fix_nhc_0.5fs_1e-6, out_fixnhc_0.2fs_1e-6 も nhc），
+--thermostat / --dt / --cgtol で上書きできる．どれかが決まらなければ見出しは「MD ログ」のまま．
 
 log.txt の列（FMD.jl/src/Apps/NPT.jl が毎ステップ 1 行書く）:
     temp(K) | lattice 9 成分(Å, 列優先) | dipole 3 (e·Å) | dipole_phys 3 (e·Å)
@@ -11,8 +17,10 @@ log.txt の列（FMD.jl/src/Apps/NPT.jl が毎ステップ 1 行書く）:
 shell_rms は 2026-10 に追加された列（シェル緩和 CG の停止時の残差の rms）．
 それより前の 19 列のログもそのまま読める（shell_rms は None になる）．
 """
+import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -56,8 +64,27 @@ def ncell_from_natoms(n):
     return k if k ** 3 * ATOMS_PER_CELL == n else None
 
 
+def run_conditions(folder, thermostat=None, dt=None, cgtol=None):
+    """見出し用の (thermostat, dt, cgtol)．引数が優先，無ければフォルダ名から．決まらなければ None．"""
+    # サーモスタット名の前に目印が付いていてもよい（out_fix_nhc_…, out_fixnhc_…）
+    m = re.search(r"(?:^|_)[A-Za-z]*?(nhc|nh|csvr|none)_([0-9.]+)fs_([0-9.eE+-]+?)(?:_|$)", folder.name)
+    if m:
+        thermostat = thermostat or m.group(1)
+        dt = dt or m.group(2)
+        cgtol = cgtol or m.group(3)
+    if not (thermostat and dt and cgtol):
+        return None
+    return f"{thermostat},{float(dt):g}fs,{cgtol}"
+
+
 def main():
-    log = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("out/log.txt")
+    ap = argparse.ArgumentParser(description="FMD の NPT-MD 出力 log.txt をグラフ（HTML）にする")
+    ap.add_argument("log", nargs="?", type=Path, default=Path("out/log.txt"), help="log.txt（既定 out/log.txt）")
+    ap.add_argument("--thermostat", help="見出しのサーモスタット名（既定: フォルダ名から）")
+    ap.add_argument("--dt", help="見出しの dt [fs]（既定: フォルダ名から）")
+    ap.add_argument("--cgtol", help="見出しの cgtol（既定: フォルダ名から）")
+    args = ap.parse_args()
+    log = args.log
     rows = read_log(log)
     # 原子数は出力スナップショットから取る（保存量を 1 原子あたりにするため）
     snaps = sorted(log.parent.glob("step_*.xyz"))
@@ -124,6 +151,13 @@ def main():
                        for k in keep]
     meta = dict(source=str(log), nsteps=len(rows), natoms=n, ncell=ncell, stride=stride)
     html = TEMPLATE.replace("__DATA__", json.dumps(dict(step=step, charts=charts, meta=meta)))
+    cond = run_conditions(log.parent.resolve(), args.thermostat, args.dt, args.cgtol)
+    if cond:
+        html = html.replace("<title>MD ログ</title>", f"<title>{cond}</title>").replace(
+            "<h1>MD ログ</h1>", f"<h1>{cond}</h1>")
+    else:
+        print("note: フォルダ名から (thermostat, dt, cgtol) が読めないので見出しは「MD ログ」のまま"
+              "（--thermostat/--dt/--cgtol で指定できる）", file=sys.stderr)
     out = log.parent / "log_plot.html"
     out.write_text(html, encoding="utf-8")
     print(f"wrote {out}  ({len(rows)} steps)")
@@ -266,7 +300,8 @@ for (const ch of DATA.charts) {
       `<span><i style="background:${COLORS[i]}"></i>${s.name}</span>`));
   card.appendChild(legend);
 
-  const all = ch.series.flatMap(s => s.y).concat(ch.ref && ch.ref.y != null ? [ch.ref.y] : []);
+  // ch.yrange = [lo, hi]（任意）: この範囲も必ず入るように縦軸を取る（複数のグラフの縦軸をそろえる用）
+  const all = ch.series.flatMap(s => s.y).concat(ch.ref && ch.ref.y != null ? [ch.ref.y] : [], ch.yrange || []);
   let lo = Math.min(...all), hi = Math.max(...all);
   const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.01 || 1;
   const yt = niceTicks(lo - pad, hi + pad, 4);
