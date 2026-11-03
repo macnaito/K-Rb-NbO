@@ -536,8 +536,10 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     # step 1 tightly (minimal divergence), all steps loosely. Column 19,
     # shell_rms, is left out of that comparison: it is the residual at the
     # CG exit, so the one-iteration flip described next changes it by a
-    # whole CG contraction factor; it is only required finite. The ncg
-    # column (20, Issue #144) is compared separately as a count: the CG
+    # whole CG contraction factor; it is only required finite on every CG
+    # step and NaN exactly where the serial run logged one (a shadow
+    # XL-BOMD step has no CG, so no residual — see evaluate_forces!). The ncg
+    # column (22, Issue #144) is compared separately as a count: the CG
     # branching is Allreduce-derived (identical across ranks), but serial
     # vs DD summation-order roundoff can flip one iteration right at the
     # cgtol threshold — and the uphill-correction branch counts two
@@ -547,12 +549,27 @@ function verify_npt_normal(d, dd_dir, ref, P, backend)
     logref = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(ref.dir, "log.txt"))]
     logdd = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(dd_dir, "log.txt"))]
     @test length(logdd) == length(logref) == 6
-    @test all(length(logdd[i]) == length(logref[i]) == 20 for i in 1:6)
+    @test all(length(logdd[i]) == length(logref[i]) == 22 for i in 1:6)
     reldiff(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), 1e-8))
     @test reldiff(logdd[1][1:18], logref[1][1:18]) < 1e-6
     @test maximum(reldiff(logdd[i][1:18], logref[i][1:18]) for i in 1:6) < 1e-3
-    @test all(isfinite(logdd[i][19]) for i in 1:6)
-    @test maximum(abs(logdd[i][20] - logref[i][20]) for i in 1:6) <= 2
+    @test all(isfinite(logdd[i][19]) == isfinite(logref[i][19]) for i in 1:6)
+    # NaN only on a step that ran no CG (ncg = 0), never as a stale or
+    # broken value on a CG step.
+    @test all(isfinite(logdd[i][19]) || (isnan(logdd[i][19]) && logdd[i][22] == 0) for i in 1:6)
+    @test isfinite(logdd[1][19])                 # step 1 is a CG step on every flavour
+    # conserved + W_d (20) and shell_cos (21): NaN exactly where the serial
+    # run has NaN (an XL-BOMD run). Column 20 follows the same tight/loose
+    # rule as columns 1..18 (W_d is a fused Allreduce of per-atom dot
+    # products; a flipped CG iteration moves it by far less than 1e-3 of
+    # H′). shell_cos is a ratio of residual-sized quantities and is left
+    # out for the same reason as shell_rms.
+    @test all(isnan(logdd[i][c]) == isnan(logref[i][c]) for i in 1:6, c in (20, 21))
+    if isfinite(logref[1][20])
+        @test reldiff(logdd[1][20:20], logref[1][20:20]) < 1e-6
+        @test maximum(reldiff(logdd[i][20:20], logref[i][20:20]) for i in 1:6) < 1e-3
+    end
+    @test maximum(abs(logdd[i][22] - logref[i][22]) for i in 1:6) <= 2
     # The rebuild (→ migrate; on cuda a host round trip) path actually
     # fired: the initial build plus at least one mid-run rebuild, counted
     # by the child's logger (pre-#113: a stdout grep on the per-check

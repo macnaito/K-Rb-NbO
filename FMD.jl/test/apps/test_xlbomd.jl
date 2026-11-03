@@ -168,6 +168,10 @@ end
                        for l in eachline(joinpath(dir, "log.txt"))]
                 @test all(isfinite, rms[1:3])
                 @test all(isnan, rms[4:end])
+                # conserved + W_d and shell_cos (columns 20, 21) are not
+                # defined for the shadow dynamics: NaN on every line.
+                @test all(l -> all(isnan, parse.(Float64, split(l)[20:21])),
+                          eachline(joinpath(dir, "log.txt")))
                 # Shadow dynamics conserves its own invariant at least as
                 # well as the tight SCF path conserves the physical one
                 # (relative comparison — the absolute scale is the
