@@ -69,11 +69,12 @@ import MPI
 
         # Driver output: one log line per step, snapshots at the interval.
         @test countlines(joinpath(dir, "log.txt")) == 4
-        # 20 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
-        # volume | conserved (Issue #136) | shell_rms | ncg (Issue #144);
+        # 22 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
+        # volume | conserved (Issue #136) | shell_rms | conserved + W_d |
+        # shell_cos | ncg (Issue #144);
         # conserved finite, ncg a non-negative count.
         cols = split(first(eachline(joinpath(dir, "log.txt"))))
-        @test length(cols) == 20
+        @test length(cols) == 22
         @test isfinite(parse(Float64, cols[18]))
         @test parse(Int, cols[end]) >= 0
         # shell_rms: every step ran the CG, so finite on every line; and
@@ -84,7 +85,7 @@ import MPI
             c = split(l)
             rms = parse(Float64, c[19])
             @test isfinite(rms) && rms >= 0
-            parse(Int, c[20]) < params[:cgmaxiter] && @test rms < params[:cgtol]
+            parse(Int, c[22]) < params[:cgmaxiter] && @test rms < params[:cgtol]
         end
         @test isfile(joinpath(dir, "step_2.xyz"))
         @test isfile(joinpath(dir, "step_4.xyz"))
@@ -220,7 +221,7 @@ end
         lines = readlines(joinpath(dir, "log.txt"))
         @test length(lines) == 4
         cols = split(lines[end])
-        @test length(cols) == 20
+        @test length(cols) == 22
         @test isfinite(parse(Float64, cols[18]))
         # shell_rms of the final step is that of the returned frame's
         # last CG exit, up to the %15.8e print precision.
@@ -665,4 +666,65 @@ end
         @test isapprox(rms, cvs[end]; rtol = 0.5)   # same order, same trend
         @test maximum(abs, Pg1 .- tgt) < 0.5 * maximum(abs, Pg0 .- tgt)
     end
+end
+
+@testset "shell-residual work W_d and direction bias (log columns 20, 21)" begin
+    # Unit: _shell_work_step! is the trapezoid ½(F_prev + F_cur)·(s − s_prev)
+    # with its cosine, and advances :shres_prev to the current residual.
+    Random.seed!(11)
+    a = make_nacl_64()
+    n = length(a)
+    a.arrays[:shellforces] .= randn(FMD.FPPREC, n, 3)
+    a.arrays[:shelldisp] .= randn(FMD.FPPREC, n, 3)
+    a.arrays[:shist1] = randn(FMD.FPPREC, n, 3)
+    a.arrays[:shres_prev] = randn(FMD.FPPREC, n, 3)
+    fbar = (a.arrays[:shres_prev] .+ a.arrays[:shellforces]) ./ 2
+    ds = a.arrays[:shelldisp] .- a.arrays[:shist1]
+    dw, cs = FMD.Apps._shell_work_step!(a, FMD.Cores.SerialDomain())
+    @test dw ≈ dot(fbar, ds) rtol = 1e-12
+    @test cs ≈ dot(fbar, ds) / (norm(fbar) * norm(ds)) rtol = 1e-12
+    @test a.arrays[:shres_prev] == a.arrays[:shellforces]
+    # A vanishing shell motion has no direction: NaN, not a fake 0.
+    a.arrays[:shist1] .= a.arrays[:shelldisp]
+    dw0, cs0 = FMD.Apps._shell_work_step!(a, FMD.Cores.SerialDomain())
+    @test dw0 == 0 && isnan(cs0)
+
+    # End-to-end (NVE): with a loose cgtol the shell CG leaves a residual
+    # whose work leaks into `conserved`; `conserved + W_d` must recover the
+    # tight-cgtol invariant. Reference: cgtol = 1e-10 (residual work
+    # negligible). Measured on this fixture (40 steps, 1 fs): |ΔH′ − ref|
+    # reaches 8.5e-7 Ha, |Δ(H′+W_d) − ref| stays at the 1e-8 print
+    # resolution of the log.
+    Random.seed!(2)
+    atoms = make_nacl_64()
+    atoms.arrays[:pos] .+= 0.01 .* randn(FMD.FPPREC, size(atoms.arrays[:pos]))
+    base = nacl_params(atoms; alpha = 0.30, ewald_tolerance = 1e-6,
+                       rc_factor = 0.45, with_shell = true)
+    dt = FMD.FPPREC(1.0 / UNITS[:fs])
+    _run(cgtol) = mktempdir() do dir
+        p = (; base..., backend = :cpu, elements = Dict("Na" => 1, "Cl" => 2),
+             pme_meshsize = FMD.FPPREC(0.5 / UNITS[:Å]), skin = FMD.FPPREC(0.1),
+             cgtol = FMD.FPPREC(cgtol), cgmaxiter = 200, nsteps = 40, timestep = dt,
+             thermostat = :none, barostat = :none,
+             initial_temperature = 300.0, seed = 3, target_temperature = 300.0,
+             output_interval = 1000, output_dir = dir)
+        Test.collect_test_logs() do
+            npt!(deepcopy_atoms(atoms), p)
+        end
+        [parse.(Float64, split(l)) for l in eachline(joinpath(dir, "log.txt"))]
+    end
+    ref = _run(1e-10)
+    loose = _run(1e-3)
+    href = [r[18] - ref[1][18] for r in ref]
+    h = [r[18] - loose[1][18] for r in loose]
+    hw = [r[20] - loose[1][20] for r in loose]
+    err_h = maximum(abs, h .- href)
+    err_hw = maximum(abs, hw .- href)
+    @test err_h > 3e-7                 # non-vacuous: the residual work is visible
+    @test err_hw < 0.1 * err_h
+    # W_d starts at 0 after the first step's work only, and the column is
+    # finite on every CG step; cos is a cosine or NaN (no shell motion).
+    @test all(r -> isfinite(r[20]), loose)
+    @test all(r -> isnan(r[21]) || -1 <= r[21] <= 1, loose)
+    @test any(r -> isfinite(r[21]), loose)
 end

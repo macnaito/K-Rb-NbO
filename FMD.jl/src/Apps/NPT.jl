@@ -101,6 +101,57 @@ function _rotate_shist!(atoms::Atoms, shist_count::Int)
 end
 
 """
+    _init_shell_work!(atoms::Atoms)
+
+Register `atoms.arrays[:shres_prev]`, the shell force left at the previous
+CG exit, as a copy of the current `:shellforces`. Like `:shist1..3` it
+lives in `atoms.arrays` so the `CellList` re-sort and the DD migration
+carry it with its atom. Call right after the initial force evaluation,
+together with [`_init_shist!`](@ref) (whose `:shist1` is the matching
+previous shell displacement).
+"""
+function _init_shell_work!(atoms::Atoms)
+    atoms.arrays[:shres_prev] = copy(atoms.arrays[:shellforces])
+    return nothing
+end
+
+"""
+    _shell_work_step!(atoms::Atoms, dom) -> (ΔW, cosθ)
+
+Work of the CG-exit shell residual over the step just taken, and the
+direction bias of that residual. Call after `evaluate_forces!` and before
+[`_rotate_shist!`](@ref), so `:shist1` still holds the previous shell
+displacement `s₀`; `:shres_prev` is then advanced to the current residual.
+
+The dynamics moves the cores at fixed `:shelldisp` with `F_core + F_shell`
+([`calculate!`](@ref) on `CoreShell`), so the conserved energy already
+accounts for the core path; the shell relaxation `s₀ → s₁` then changes
+the potential energy by `−∫ F_shell·ds`, which no equation of motion
+sees. Taking the joint straight line `(r₀, s₀) → (r₁, s₁)` and the
+trapezoid rule — the same order the velocity Verlet kick-drift-kick uses
+for the core path, and exact for an energy quadratic in `(r, s)` — gives
+
+    ΔW = ½ (F_res(t₀) + F_res(t₁)) · (s₁ − s₀)
+
+with both residuals already at hand (no extra force evaluation), so
+`conserved + W_d` with `W_d = Σ ΔW` is conserved up to the O(dt²)
+integration error. `cosθ` is the cosine between the averaged residual and
+`s₁ − s₀`, i.e. `ΔW / (|F̄| |Δs|)`: a residual that points systematically
+along the shell motion (`cosθ > 0`) is what drives a secular drift of
+`conserved`. NaN when either vector vanishes. Units: ΔW in Hartree.
+Collective under DD (one fused 3-scalar Allreduce).
+"""
+function _shell_work_step!(atoms::Atoms, dom)
+    arr = atoms.arrays
+    fbar = (arr[:shres_prev] .+ arr[:shellforces]) ./ 2
+    ds = arr[:shelldisp] .- arr[:shist1]
+    buf = Float64[sum(fbar .* ds), sum(abs2, fbar), sum(abs2, ds)]
+    Cores.allreduce_sum!(dom, buf)
+    arr[:shres_prev] .= arr[:shellforces]
+    return buf[1], buf[1] / sqrt(buf[2] * buf[3])
+end
+
+"""
     _report_temperature(atoms, dom) -> Float64
 
 Instantaneous kinetic temperature (Kelvin) reported in `log.txt`, over
@@ -214,6 +265,12 @@ params, and the MLIP alike).
   relaxation, Ha/Bohr like `cgtol`; the stopping test bounds only their
   maximum. NaN on a `shell_dynamics = :xlbomd` shadow step, which runs no
   CG),
+  `conserved + W_d` (`conserved` plus the accumulated work of the CG-exit
+  shell residual, which `conserved` alone misses; see
+  [`_shell_work_step!`](@ref)), `shell_cos` (cosine between the
+  step-averaged shell residual and the step's shell displacement change —
+  the direction bias that makes `W_d` grow secularly; both NaN under
+  `shell_dynamics = :xlbomd`),
   `ncg` (dimensionless count: shell-relaxation force evaluations inside
   the CG loop, the [`calculate!`](@ref) return value, Issue #144. The
   initial shell evaluation and the core evaluation are not counted, so
@@ -341,6 +398,11 @@ function npt!(atoms::Atoms, params)
 
     shist_count = _init_shist!(atoms)
     xl = xl_init!(atoms, params)   # nothing unless shell_dynamics = :xlbomd
+    # Accumulated shell-residual work W_d (see _shell_work_step!). The XL
+    # path runs no CG on its shadow steps and its conserved quantity is the
+    # shadow energy, so W_d and its direction bias are reported as NaN there.
+    xl === nothing && _init_shell_work!(atoms)
+    wd = 0.0
 
     for step in 1:params[:nsteps]
         c = _control_context(params, step, nglob_ctrl, tstress_h)
@@ -358,6 +420,9 @@ function npt!(atoms::Atoms, params)
         atoms = rebuild_lists!(fs, atoms, params, arrtyp, dom)
 
         ncg = evaluate_forces!(atoms, fs, params; xl = xl)
+        # Before the rotation: :shist1 still holds the previous shelldisp.
+        dwd, shell_cos = xl === nothing ? _shell_work_step!(atoms, dom) : (NaN, NaN)
+        wd += dwd
         shist_count = _rotate_shist!(atoms, shist_count)
 
         calc_dipole_phys!(atoms, params, mfr_total)
@@ -378,8 +443,8 @@ function npt!(atoms::Atoms, params)
 
         if Cores.isroot(dom)
             open(joinpath(params[:output_dir], "log.txt"), ifelse(step == 1, "w", "a")) do io
-                # Columns: temp | lattice(9) | dipole(3) | dipole_phys(3) | volume | conserved | shell_rms | ncg
-                @printf(io, "%15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %6d \n",
+                # Columns: temp | lattice(9) | dipole(3) | dipole_phys(3) | volume | conserved | shell_rms | conserved+W_d | shell_cos | ncg
+                @printf(io, "%15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %15.8e %6d \n",
                     temp,
                     (Matrix(atoms.info[:lattice]) .* UNITS[:Å])...,
                     (Vector(atoms.info[:dipole] .* UNITS[:Å]))...,
@@ -387,6 +452,8 @@ function npt!(atoms::Atoms, params)
                     volume(atoms) * UNITS[:Å]^3,
                     conserved,
                     Array(atoms.info[:shell_residual_rms])[1],
+                    conserved + wd,
+                    shell_cos,
                     ncg)
             end
         end

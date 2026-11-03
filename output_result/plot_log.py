@@ -31,18 +31,23 @@ ATOMS_PER_CELL = 5  # ペロブスカイト ABO3 の単位格子あたりの原�
 
 
 def read_log(path):
-    """1 行 = [18 個の float..., ncg(int), shell_rms(float か None)]．
+    """1 行 = [18 個の float..., ncg(int), shell_rms, conserved+W_d, shell_cos]．
 
     列の位置は r[0]〜r[17] と r[18] = ncg のまま変えない（古いスクリプトと互換）．
+    古いログに無い列は None．
     """
     rows = []
     with open(path) as f:
         for line in f:
             v = line.split()
             if len(v) == 19:      # shell_rms 列が入る前のログ
-                rows.append([float(x) for x in v[:18]] + [int(v[18]), None])
+                rows.append([float(x) for x in v[:18]] + [int(v[18]), None, None, None])
             elif len(v) == 20:    # ... | conserved | shell_rms | ncg
-                rows.append([float(x) for x in v[:18]] + [int(v[19]), float(v[18])])
+                rows.append([float(x) for x in v[:18]] + [int(v[19]), float(v[18]), None, None])
+            elif len(v) == 22:    # ... | conserved | shell_rms | conserved+W_d | shell_cos | ncg
+                rows.append([float(x) for x in v[:18]] + [int(v[21]), float(v[18]), float(v[19]), float(v[20])])
+            else:
+                sys.exit(f"{path}: 列数 {len(v)} の行は読めません")
     if not rows:
         sys.exit(f"{path}: データ行がありません")
     return rows
@@ -118,6 +123,18 @@ def main():
     has_rms = all(x is not None and math.isfinite(x) for x in rms)
     if any(x is not None for x in rms) and not has_rms:
         print("note: shell_rms に NaN があるので（XL-BOMD など）残差のグラフは省略")
+    # 保存量 + W_d（シェル残差の仕事の累積）と残差の向きの偏り cos（XL-BOMD では NaN）
+    hw = [r[20] for r in rows]
+    has_hw = all(x is not None and math.isfinite(x) for x in hw)
+    # cos はステップごとにばらつくので累積平均を描く．シェルが動かなかった
+    # ステップ（CG なし・外挿なし）は NaN なので平均から除く
+    cosmean, csum, ccount = [], 0.0, 0
+    for r in rows:
+        if r[21] is not None and math.isfinite(r[21]):
+            csum += r[21]
+            ccount += 1
+        cosmean.append(csum / ccount if ccount else 0.0)
+    has_cos = ccount > 0
 
     charts = [
         dict(id="temp", title="温度", unit="K", series=[dict(name="温度", y=temp)],
@@ -128,8 +145,10 @@ def main():
         dict(id="pol", title="分極（dipole_phys / V）", unit="μC/cm²",
              series=[dict(name="Px", y=px), dict(name="Py", y=py), dict(name="Pz", y=pz)],
              ref=dict(y=0, label="0")),
-        dict(id="cons", title="保存量の変化 ΔH′",
-             unit="meV/原子" if n else "eV", series=[dict(name="ΔH′", y=dh)],
+        dict(id="cons", title="保存量の変化 ΔH′" + ("，ΔH′ + W_d" if has_hw else ""),
+             unit="meV/原子" if n else "eV",
+             series=[dict(name="ΔH′", y=dh)]
+             + ([dict(name="Δ(H′+W_d)", y=[(x - hw[0]) * scale for x in hw])] if has_hw else []),
              ref=dict(y=0, label="0")),
         dict(id="ncg", title="シェル緩和の反復回数", unit="回",
              series=[dict(name="ncg", y=ncg)], integer=True),
@@ -137,6 +156,9 @@ def main():
     if has_rms:
         charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å",
                            series=[dict(name="rms", y=[x * HA_PER_BOHR_TO_MEV_PER_A for x in rms])]))
+    if has_cos:
+        charts.append(dict(id="cos", title="シェル残差の向きの偏り（cos の累積平均）", unit="無次元",
+                           series=[dict(name="cos", y=cosmean)], ref=dict(y=0, label="0")))
     # 長い計算では HTML が重くなるので，最大 MAXPTS 点に間引く（等間隔）．
     # 有効数字も 7 桁に丸める（グラフと表には十分）
     MAXPTS = 2000
