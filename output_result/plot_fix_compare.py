@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 OUT = Path(sys.argv[2])
 SC = 27.21138625 * 1000 / 2560          # Ha → meV/atom
-RUNS = [(0.2, "0.2fs"), (0.5, "0.5fs"), (1.0, "1fs")]
+RUNS = [(1.0, "1fs"), (0.5, "0.5fs"), (0.2, "0.2fs")]   # 図の並び（左から）
 MAXPTS = 1200
 SKIP_PS = 0.2
 
