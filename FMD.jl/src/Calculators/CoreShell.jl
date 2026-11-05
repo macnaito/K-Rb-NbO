@@ -1,6 +1,7 @@
 using LinearAlgebra
 import AcceleratedKernels as AK
 import KernelAbstractions as KA
+using KernelAbstractions: @kernel, @index, @Const
 using ..FMD.Cores
 using StaticArrays
 
@@ -191,7 +192,13 @@ it and the exact gradient of the energy at the current shell positions is
 (`F_shell = 0`) this is the plain core force; with the residual the CG
 leaves at `cgtol`, omitting it leaks the residual's work `−F_shell·Δr` into
 the conserved energy every step (the XL-BOMD path adds it the same way).
-`:shellforces` itself is left as is.
+`:shellforces` itself is left as is. The virial follows the same
+convention: it is `−∂E/∂ε` at fixed Cartesian `:shelldisp` (the barostat
+scales `:pos`, never `:shelldisp`), i.e. the affine virial minus
+`Σ sym[(F_s − q_s E) ⊗ shelldisp]` — again the XL-BOMD shadow virial's
+convention; the term vanishes for relaxed shells. What this cannot remove
+is the residual's work along the shell update itself, `−F_shell·Δshelldisp`
+between steps (predictor + CG), which still reaches the conserved energy.
 
 Reuses `nl` (built by the caller via [`neighborlist`](@ref)) and `coulomb`
 (an [`EwaldInfo`](@ref) or [`PMEInfo`](@ref) — `cellupdate!` is invoked
@@ -251,10 +258,62 @@ function calculate!(::CoreShell, atoms::Atoms, nl::NeighborList, coulomb::Coulom
 
     core_forces!(atoms, nl, coulomb, prms)
     # The shell rides along when the core moves at fixed :shelldisp, so the
-    # core force must carry the CG residual too (see the docstring).
+    # core force must carry the CG residual too (see the docstring) — and
+    # the virial must be the strain derivative at the same fixed
+    # :shelldisp.
     arr[:forces] .+= arr[:shellforces]
+    _residual_virial!(atoms, prms)
 
     return fcount
+end
+
+# Convert the virial core_forces! leaves (every site rides the cell
+# affinely, shells included) into the strain derivative at fixed Cartesian
+# :shelldisp — the variable the dynamics holds fixed between CG solves
+# (the barostat scales :pos, never :shelldisp):
+#
+#   −∂E/∂ε|_shelldisp = W_affine − Σ_i sym[(F_s,i − q_s,i E) ⊗ d_i]
+#
+# The same conversion the XL-BOMD shadow virial makes (kernel_xl_virial!,
+# Issue #151), and for the same reason the external-field part of the
+# shell force is excluded: ExternalField contributes nothing to the
+# virial, so its force must not be turned into a strain derivative. With
+# relaxed shells (F_s = q_s E) the term vanishes.
+@kernel inbounds = true function kernel_residual_virial!(vir, @Const(shellforces),
+    @Const(shelldisp), @Const(elemid), @Const(qs), @Const(efield))
+
+    I = @index(Global)
+    q = qs[elemid[I]]
+    fx = shellforces[I,1] - q*efield[1]
+    fy = shellforces[I,2] - q*efield[2]
+    fz = shellforces[I,3] - q*efield[3]
+    dx, dy, dz = shelldisp[I,1], shelldisp[I,2], shelldisp[I,3]
+
+    vir[I,1] = -fx*dx
+    vir[I,2] = -fy*dy
+    vir[I,3] = -fz*dz
+    vir[I,4] = -(fy*dz + fz*dy)/2
+    vir[I,5] = -(fz*dx + fx*dz)/2
+    vir[I,6] = -(fx*dy + fy*dx)/2
+end
+
+function _residual_virial!(atoms::Atoms, prms)
+    N = length(atoms)
+    # An empty rank still rides the collective inside add_reduced_ev!.
+    if N == 0
+        add_reduced_ev!(atoms, zero(FPPREC), zeros(FPPREC, 6))
+        return nothing
+    end
+    arr = atoms.arrays
+    backend = KA.get_backend(arr[:forces])
+    vir = KA.zeros(backend, FPPREC, N, 6)
+    kernel_residual_virial!(backend, 512, N)(vir, arr[:shellforces], arr[:shelldisp],
+        arr[:elemid], prms[:qs], prms[:efield])
+    add_reduced_ev!(atoms, zero(FPPREC), AK.sum(vir, dims = 1)[1, :])
+    if haskey(arr, :peratom_virial)
+        arr[:peratom_virial] .+= vir
+    end
+    return nothing
 end
 
 """

@@ -139,6 +139,50 @@ end
     num = -(evaluate(frozen!, ap)[1] - evaluate(frozen!, am)[1]) / 2e-4
     Fcore = relaxed.arrays[:forces][i, ax] - Fs[i, ax]
     @test abs(Fcore - num) > 100 * (1e-5 + 1e-3 * abs(num))
+
+    # Virial in the same convention: −∂E/∂ε with :pos riding the cell
+    # (fractional) and :shelldisp held fixed in Cartesian — what the
+    # barostat does between CG solves. A nonzero field makes the q_s·E
+    # exclusion matter: F_s here contains q_s·E, which must not enter.
+    # The correction is Σ (F_s − q_s E)⊗d, so it needs BOTH a residual and
+    # a nonzero :shelldisp; the fixture above starts at d = 0 and its CG
+    # exits without iterating. Displace the shells and keep them there
+    # (cgtol above the initial residual → zero CG iterations).
+    prmsF = (; prms..., efield = FMD.FPPREC[0.002, -0.001, 0.0015],
+             cgtol = FMD.FPPREC(10.0))
+    relaxedF = deepcopy_atoms(atoms)
+    relaxedF.arrays[:shelldisp] .= 0.05 .* randn(FMD.FPPREC, size(relaxedF.arrays[:shelldisp]))
+    @test Calculators.calculate!(Calculators.CoreShell(), relaxedF, prmsF) == 0
+    @test maximum(abs, relaxedF.arrays[:shellforces]) > 1e-2
+    W = copy(Array(relaxedF.info[:virial]))
+    prmsFE = (; prmsF..., alpha = Calculators.ewaldcoeff(prmsF))
+    energy_at(b) = begin
+        nl = neighborlist(b, prmsFE[:rc], prmsFE[:skin])
+        Calculators.core_forces!(b, nl, Calculators.EwaldInfo(b.info[:lattice], prmsFE), prmsFE)
+        Array(b.info[:potential_energy])[1]
+    end
+    lat0 = copy(Array(relaxedF.info[:lattice]))
+    sd0 = copy(Array(relaxedF.arrays[:shelldisp]))
+    function strainE(δ, α, β; affine)
+        D = Matrix{FMD.FPPREC}(I, 3, 3)
+        D[α, β] += δ / 2; D[β, α] += δ / 2
+        b = deepcopy_atoms(relaxedF)
+        b.info[:lattice] .= lat0 * D'
+        b.arrays[:shelldisp] .= affine ? sd0 * D' : sd0
+        energy_at(b)
+    end
+    h = 1e-5
+    worst_fixed = 0.0; worst_affine = 0.0
+    for (k, (α, β)) in enumerate(((1, 1), (2, 2), (3, 3), (2, 3), (3, 1), (1, 2)))
+        num_fixed = -(strainE(h, α, β; affine = false) - strainE(-h, α, β; affine = false)) / 2h
+        num_aff = -(strainE(h, α, β; affine = true) - strainE(-h, α, β; affine = true)) / 2h
+        @test isapprox(W[k], num_fixed; rtol = 1e-4, atol = 1e-8)
+        worst_fixed = max(worst_fixed, abs(W[k] - num_fixed))
+        worst_affine = max(worst_affine, abs(W[k] - num_aff))
+    end
+    # Sensitivity: the affine convention (the pre-fix virial) is off by
+    # far more than the tolerance above, so dropping the conversion fails.
+    @test worst_affine > 100 * max(worst_fixed, 1e-8)
 end
 
 @testset "linear_response! (CPU only)" begin
