@@ -40,9 +40,9 @@ end
 "Highest order of the `:poly` shell predictor (`shell_extrap_order`)."
 const SHELL_EXTRAP_MAX_ORDER = 4
 "Highest `k` of the `:aspc` shell predictor (`shell_aspc_k`)."
-const SHELL_ASPC_MAX_K = 3
+const SHELL_ASPC_MAX_K = 4
 
-const _SHIST_KEYS = (:shist1, :shist2, :shist3, :shist4, :shist5)
+const _SHIST_KEYS = (:shist1, :shist2, :shist3, :shist4, :shist5, :shist6)
 _shist_key(j::Int) = _SHIST_KEYS[j]
 _shist_nslots(atoms::Atoms) = count(k -> haskey(atoms.arrays, k), _SHIST_KEYS)
 
@@ -79,7 +79,7 @@ as `s_pred = Σ_j B_j · s(t−j+1)`. They sum to 1 and reproduce a linear
 history exactly (not a quadratic one, for any `k`): the extra points buy
 stability and time reversibility of the predictor–corrector, not order.
 k = 0: (2, −1); 1: (5/2, −2, 1/2); 2: (14/5, −14/5, 6/5, −1/5);
-3: (3, −24/7, 27/14, −4/7, 1/14).
+3: (3, −24/7, 27/14, −4/7, 1/14); 4: (22/7, −55/14, 55/21, −22/21, 5/21, −1/42).
 """
 _aspc_coeffs(k::Int) =
     [(-1)^(j + 1) * j * binomial(2k + 4, k + 2 - j) // binomial(2k + 2, k + 1) for j in 1:k + 2]

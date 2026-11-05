@@ -114,7 +114,8 @@ using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
         @test _aspc_coeffs(1) == [5//2, -2, 1//2]
         @test _aspc_coeffs(2) == [14//5, -14//5, 6//5, -1//5]
         @test _aspc_coeffs(3) == [3, -24//7, 27//14, -4//7, 1//14]
-        for k in 0:3
+        @test _aspc_coeffs(4) == [22//7, -55//14, 55//21, -22//21, 5//21, -1//42]
+        for k in 0:4
             B = _aspc_coeffs(k)
             @test sum(B) == 1                                   # constant history
             @test sum(B[j] * (1 - j) for j in eachindex(B)) == 1  # linear: s(t−j+1) = 1−j → s(t+1) = 1
@@ -123,7 +124,7 @@ using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
             @test _shell_predictor_npoints(:aspc, k) == k + 2
         end
 
-        for k in 0:3
+        for k in 0:4
             atoms = make_atoms(lat, frac, ones(Int, N))
             sd = atoms.arrays[:shelldisp]
             cnt = _init_shist!(atoms; predictor = :aspc, order = k)
@@ -144,7 +145,7 @@ using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
             hist = [atoms.arrays[Symbol(:shist, j)] for j in 1:k + 2]
             @test sd ≈ sum(FMD.FPPREC(_aspc_coeffs(k)[j]) .* hist[j] for j in 1:k + 2)
         end
-        @test_throws ErrorException _init_shist!(make_atoms(lat, frac, ones(Int, N)); predictor = :aspc, order = 4)
+        @test_throws ErrorException _init_shist!(make_atoms(lat, frac, ones(Int, N)); predictor = :aspc, order = 5)
         @test_throws ErrorException _init_shist!(make_atoms(lat, frac, ones(Int, N)); predictor = :foo, order = 2)
     end
 end

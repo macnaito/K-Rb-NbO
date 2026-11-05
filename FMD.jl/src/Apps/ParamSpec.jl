@@ -426,7 +426,7 @@ function _check_control_params(p)
     if haskey(p, :shell_predictor) && !(pr in (:poly, :aspc))
         push!(msgs, "shell_predictor must be :poly or :aspc (got $(repr(pr)))")
     end
-    for (k, hi, owner) in ((:shell_extrap_order, 4, :poly), (:shell_aspc_k, 3, :aspc))
+    for (k, hi, owner) in ((:shell_extrap_order, 4, :poly), (:shell_aspc_k, 4, :aspc))
         haskey(p, k) || continue
         o = p[k]
         o isa Integer && !(o isa Bool) && 0 <= o <= hi ||

@@ -290,15 +290,15 @@ end
         end
         msg = _verr(:NPTMD, _val_nptmd(; shell_extrap_order = 3, shell_dynamics = :xlbomd))
         @test msg !== nothing && occursin(":shell_extrap_order is only read by shell_dynamics = :scf", msg)
-        # ASPC: shell_aspc_k ∈ 0:3 with shell_predictor = :aspc only.
-        for k in 0:3
+        # ASPC: shell_aspc_k ∈ 0:4 with shell_predictor = :aspc only.
+        for k in 0:4
             @test FMD.validate_params(:NPTMD, _val_nptmd(; shell_predictor = :aspc, shell_aspc_k = k)) === nothing
         end
         @test FMD.validate_params(:NPTMD, _val_nptmd(; shell_predictor = :poly)) === nothing
         msg = _verr(:NPTMD, _val_nptmd(; shell_predictor = :gear))
         @test msg !== nothing && occursin("shell_predictor must be :poly or :aspc", msg)
-        msg = _verr(:NPTMD, _val_nptmd(; shell_predictor = :aspc, shell_aspc_k = 4))
-        @test msg !== nothing && occursin("shell_aspc_k must be an Integer in 0:3", msg)
+        msg = _verr(:NPTMD, _val_nptmd(; shell_predictor = :aspc, shell_aspc_k = 5))
+        @test msg !== nothing && occursin("shell_aspc_k must be an Integer in 0:4", msg)
         msg = _verr(:NPTMD, _val_nptmd(; shell_aspc_k = 1))
         @test msg !== nothing && occursin(":shell_aspc_k is only read by shell_predictor = :aspc", msg)
         msg = _verr(:NPTMD, _val_nptmd(; shell_predictor = :aspc, shell_extrap_order = 2))
