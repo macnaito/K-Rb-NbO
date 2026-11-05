@@ -254,6 +254,8 @@ end
         @test msg !== nothing && occursin("only read by thermostat = :nhc", msg)
         msg = _verr(:NPTMD, _val_nptmd(; thermostat = :nhc, nhc_length = 0))
         @test msg !== nothing && occursin("nhc_length must be an Integer >= 1", msg)
+        msg = _verr(:NPTMD, _val_nptmd(; thermostat = :nhc, nhc_length = true))
+        @test msg !== nothing && occursin("nhc_length must be an Integer >= 1", msg)
 
         # Value-conditional keys: the active method demands its τ (and the
         # barostat its target stress)…

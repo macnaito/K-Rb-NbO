@@ -29,7 +29,7 @@ const CPU_BUNDLES = [
          "hvp_dd/normal", "umbrella", "umbrella/map", "surface_term",
          "fitspline", "fitspline/nlh", "fitace", "fitace/precond",
          "npt_dd/normal", "npt_dd/nlh",
-         "npt_dd/umbrella", "npt_dd/csvr", "npt_dd/scr",
+         "npt_dd/umbrella", "npt_dd/csvr", "npt_dd/nhc", "npt_dd/scr",
          "hvp_dd/surface",
          "npt_dd/xlbomd", "npt_dd/xlbomd_cheb", "npt_dd/xlbomd_baro",
          "npt_dd/xlbomd_surface",
@@ -241,6 +241,16 @@ end
         verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/csvr"),
                           joinpath(cpu_bundles[2].outdir, bundle_slug("npt_dd/csvr")),
                           ref_c, 2, :cpu)
+    end
+
+    # NHC through the DD driver (P = 2): the chain ζ_j / work
+    # are host scalars replicated per rank, driven only by the Allreduced
+    # kinetic energy, so DD must match serial at the NH tolerances.
+    @testset "NHC through the DD driver (P = 2)" begin
+        ref_n = npt_dd_serial_ref(:cpu; nhc = true)
+        verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/nhc"),
+                          joinpath(cpu_bundles[2].outdir, bundle_slug("npt_dd/nhc")),
+                          ref_n, 2, :cpu)
     end
 
     # SCR through the DD driver (P = 2, Issue #140): the stochastic cell

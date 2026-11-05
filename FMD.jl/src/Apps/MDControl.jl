@@ -272,7 +272,7 @@ function _build_thermostat(params)
         haskey(params, :tau_t) ||
             error("npt!: thermostat = :nhc requires params[:tau_t]")
         M = get(params, :nhc_length, 3)
-        M isa Integer && M >= 1 ||
+        M isa Integer && !(M isa Bool) && M >= 1 ||
             error("npt!: params[:nhc_length] must be an Integer >= 1 (got $(repr(M)))")
         return NoseHooverChain(zeros(M), 0.0, Float64(params[:tau_t]))
     elseif kind === :csvr

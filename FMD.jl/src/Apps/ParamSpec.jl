@@ -372,7 +372,7 @@ function _check_control_params(p)
     if haskey(p, :nhc_length)
         th === :nhc || push!(msgs, ":nhc_length is only read by thermostat = :nhc " *
                                    "— drop it (got thermostat = $(repr(th)))")
-        p[:nhc_length] isa Integer && p[:nhc_length] >= 1 ||
+        p[:nhc_length] isa Integer && !(p[:nhc_length] isa Bool) && p[:nhc_length] >= 1 ||
             push!(msgs, "nhc_length must be an Integer >= 1 (got $(repr(p[:nhc_length])))")
     end
     if th === :csvr && haskey(p, :target_temperature) && !(p[:target_temperature] >= 1.0)

@@ -409,14 +409,15 @@ end
 # Serial reference computed in THIS process (no MPI.Init → SerialDomain);
 # on backend = :cuda this is the GPU serial run. One call per fixture
 # flavour, shared across every P.
-function npt_dd_serial_ref(backend; csvr::Bool = false, scr::Bool = false,
+function npt_dd_serial_ref(backend; csvr::Bool = false, nhc::Bool = false,
+                          scr::Bool = false,
                           xl::Bool = false, cheb::Bool = false,
                           xlbaro::Bool = false, nlh::Bool = false,
                           surface::Bool = false)
     full = _npt_dd_fixture(false)
     dir = mktempdir()
     ref = npt!(deepcopy_atoms(full),
-               _npt_dd_params(full, dir; tiny = false, csvr = csvr,
+               _npt_dd_params(full, dir; tiny = false, csvr = csvr, nhc = nhc,
                               scr = scr, xl = xl, cheb = cheb,
                               xlbaro = xlbaro, nlh = nlh, surface = surface,
                               backend = backend))

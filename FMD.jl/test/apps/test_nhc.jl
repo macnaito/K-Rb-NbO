@@ -65,8 +65,9 @@ end
 
 @testset "NHC conserved quantity, ideal gas" begin
     # Same fixture as the (nh, ·) cases in test_npt_cpu_smoke.jl. With
-    # tau_t = 20·dt the light upper links (Q_j = kT·τ²) reach |ζ_j·dt| ≈
-    # 0.2, so the bounded O(dt²) wobble is larger than for single NH.
+    # tau_t = 20·dt the light upper links (Q_j = kT·τ²) have canonical
+    # rms ζ_j·dt = dt/τ = 0.05 (peaks ≈ 0.2), vs dt/(τ√(3N−3)) for the
+    # single NH link, so the bounded O(dt²) wobble is larger than for NH.
     # Measured (M = 3): (·, mttk) below 2e-5 @1500; (·, none) 2.1e-5
     # @1500, bounded (≤ 2e-5 out to 12000 steps, no trend). A missing or
     # mis-signed chain term in the work booking / _control_energy is a
@@ -128,41 +129,66 @@ end
     @test w1 / w2 > 3
 end
 
-@testset "NHC equipartition of every link (time averages)" begin
-    # Bounded ζ_j ⇒ ⟨dζ_j/dt⟩ → 0, i.e. the stationary identities
-    #   ⟨2K⟩ = (3N−3)·kT,   ⟨Q_{j−1}ζ_{j−1}²⟩ = kT  (j = 2…M)
-    # hold for the chain's own dynamics. Starting at 200 K against a 300 K
-    # target makes them non-trivial: the fixed points are reached only
-    # through the chain coupling. A wrong link mass or a wrong link force
-    # (e.g. Q_j ζ_j² instead of Q_{j−1}ζ_{j−1}² driving link j) shifts the
-    # corresponding average by O(1).
+@testset "NHC samples the canonical distribution; single NH does not" begin
+    # Force-free gas + uniform velocity scaling: the velocity direction is
+    # frozen, so the only dynamical variable is K (plus the chain). This is
+    # the textbook non-ergodic case for a single NH thermostat — (ln K, ζ)
+    # moves on a closed orbit set by the initial condition — and the case
+    # the chain exists to fix. Canonical targets (g = 3N−3):
+    #   K ~ Gamma(g/2, kT)  ⇒  ⟨2K⟩ = g·kT,  Var(K) = g·kT²/2
+    #   ζ_j ~ N(0, kT/Q_j)  ⇒  ⟨Q_j ζ_j²⟩ = kT   (j = 1…M)
+    # Only one of these is an identity of the dynamics: the top link is
+    # undamped, dζ_M/dt = (Q_{M−1}ζ_{M−1}² − kT)/Q_M, so bounded ζ_M forces
+    # ⟨Q_{M−1}ζ_{M−1}²⟩ = kT. Lower links obey ⟨G_j⟩ = Q_j⟨ζ_j ζ_{j+1}⟩,
+    # which vanishes only under canonical sampling — so the remaining
+    # checks measure canonicity, not bookkeeping. A wrong link mass or
+    # link force shifts the corresponding average by O(1).
+    # Starting at 200 K against a 300 K target, the single-NH orbit is
+    # wide. Measured, 80k steps, seeds 77/1/2/3/4:
+    #   M = 3: Var(K) ratio 1.004–1.012, ⟨2K⟩ ratio within 8e-4,
+    #          ⟨Q_jζ_j²⟩/kT 0.99–1.034 (top-link identity 1.000)
+    #   M = 1: Var(K) ratio 1.9–8.2 (2.11 for seed 77)
     dt = FMD.FPPREC(1.0 / UNITS[:fs])
-    a = _nhc_gas(77; T0 = 200.0)
-    N = length(a)
     T0 = 300.0
     kT = T0 / UNITS[:Kelvin]
-    prms = (; target_temperature = T0, timestep = dt, tau_t = 10dt, nsteps = 1)
-    c = FMD.Apps._control_context(prms, 1, N, zeros(3, 3))
-    M = 3
-    th = FMD.Apps.NoseHooverChain(zeros(M), 0.0, Float64(10dt))
-    nob = FMD.Apps.NoBarostat()
-    for _ in 1:2000                         # warmup
-        _nhc_step!(a, th, nob, c, dt)
-    end
-    nsamp = 40_000
-    s2K = 0.0
-    sQz = zeros(M - 1)
-    for _ in 1:nsamp
-        _nhc_step!(a, th, nob, c, dt)
-        s2K += 2kinetic_energy(a)
-        for j in 1:M-1
-            sQz[j] += FMD.Apps._mass_chain(th, c, j) * th.zeta[j]^2
+    function sample(M)
+        a = _nhc_gas(77; T0 = 200.0)
+        N = length(a)
+        prms = (; target_temperature = T0, timestep = dt, tau_t = 10dt, nsteps = 1)
+        c = FMD.Apps._control_context(prms, 1, N, zeros(3, 3))
+        th = FMD.Apps.NoseHooverChain(zeros(M), 0.0, Float64(10dt))
+        nob = FMD.Apps.NoBarostat()
+        for _ in 1:2000                         # warmup
+            _nhc_step!(a, th, nob, c, dt)
         end
+        nsamp = 80_000
+        sK = 0.0; sK2 = 0.0
+        sQz = zeros(M)
+        for _ in 1:nsamp
+            _nhc_step!(a, th, nob, c, dt)
+            K = kinetic_energy(a)
+            sK += K; sK2 += K^2
+            for j in 1:M
+                sQz[j] += FMD.Apps._mass_chain(th, c, j) * th.zeta[j]^2
+            end
+        end
+        g = 3N - 3
+        mK = sK / nsamp
+        return (; twoK = 2mK / (g * kT),
+                  varK = (sK2 / nsamp - mK^2) / (g * kT^2 / 2),
+                  Qz = sQz ./ nsamp ./ kT)
     end
-    @test abs(s2K / nsamp / ((3N - 3) * kT) - 1) < 0.02
-    for j in 1:M-1
-        @test abs(sQz[j] / nsamp / kT - 1) < 0.1
+    M = 3
+    r = sample(M)
+    @test abs(r.Qz[M-1] - 1) < 0.005          # top-link identity
+    @test abs(r.twoK - 1) < 0.005
+    @test abs(r.varK - 1) < 0.05              # canonical KE fluctuation
+    for j in 1:M
+        @test abs(r.Qz[j] - 1) < 0.1          # every link, incl. the top one
     end
+    r1 = sample(1)                            # control: single NH
+    @test abs(r1.twoK - 1) < 0.005            # its one identity still holds …
+    @test r1.varK > 1.5                       # … but K is not canonical
 end
 
 @testset "NHC builder / validation" begin
@@ -178,6 +204,8 @@ end
         (; thermostat = :nhc, tau_t = 1.0, nhc_length = 0))
     @test_throws "nhc_length] must be an Integer >= 1" FMD.Apps._build_thermostat(
         (; thermostat = :nhc, tau_t = 1.0, nhc_length = 2.0))
+    @test_throws "nhc_length] must be an Integer >= 1" FMD.Apps._build_thermostat(
+        (; thermostat = :nhc, tau_t = 1.0, nhc_length = true))
 end
 
 @testset "NHC driver smoke (nhc × mttk / nhc × none)" begin

@@ -69,6 +69,7 @@ const CHECKS = Dict{String,Tuple{Function,String}}(
     "npt_dd/umbrella"   => (check_npt_dd,    "umbrella"),
     "npt_dd/tiny"       => (check_npt_dd,    "tiny"),
     "npt_dd/csvr"       => (check_npt_dd,    "csvr"),
+    "npt_dd/nhc"        => (check_npt_dd,    "nhc"),
     "npt_dd/scr"        => (check_npt_dd,    "scr"),
     "npt_dd/xlbomd"     => (check_npt_dd,    "xlbomd"),
     "npt_dd/xlbomd_surface" => (check_npt_dd, "xlbomd_surface"),
