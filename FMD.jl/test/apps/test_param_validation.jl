@@ -279,6 +279,17 @@ end
         @test msg !== nothing && occursin("tau_t must be > 0", msg)
         msg = _verr(:NPTMD, _val_nptmd(; tau_p = -1.0))
         @test msg !== nothing && occursin("tau_p must be > 0", msg)
+
+        # Shell predictor order (shell_extrap_order ∈ 0:4, :scf only).
+        for o in 0:4
+            @test FMD.validate_params(:NPTMD, _val_nptmd(; shell_extrap_order = o)) === nothing
+        end
+        for bad in (-1, 5, 2.0, true)
+            msg = _verr(:NPTMD, _val_nptmd(; shell_extrap_order = bad))
+            @test msg !== nothing && occursin("shell_extrap_order must be an Integer in 0:4", msg)
+        end
+        msg = _verr(:NPTMD, _val_nptmd(; shell_extrap_order = 3, shell_dynamics = :xlbomd))
+        @test msg !== nothing && occursin(":shell_extrap_order is only read by shell_dynamics = :scf", msg)
     end
 
     @testset "inert keys from JLD2 splat are accepted" begin
