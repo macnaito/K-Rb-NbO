@@ -18,33 +18,70 @@ using MPI
 # the integration loop.
 
 """
-    _init_shist!(atoms::Atoms) -> Int
+    _init_shist!(atoms::Atoms; order::Int = 2) -> Int
 
-Register the 3-term shell-displacement extrapolation history
-`atoms.arrays[:shist1..3]` (initialised to copies of the current
-`:shelldisp`) and return the initial rotation count `0`. Living in
-`atoms.arrays` means the `CellList` re-sort (`atoms[idx]`) permutes the
-history together with every other per-atom array — no manual re-ordering
-by the caller.
+Register the shell-displacement extrapolation history
+`atoms.arrays[:shist1..n]`, `n = max(3, order + 1)` (initialised to copies
+of the current `:shelldisp`), and return the initial rotation count `0`.
+Living in `atoms.arrays` means the `CellList` re-sort (`atoms[idx]`)
+permutes the history together with every other per-atom array — no manual
+re-ordering by the caller. At least three slots are always kept so the
+default `order = 2` layout (`:shist1..3`) is unchanged.
 """
-function _init_shist!(atoms::Atoms)
-    atoms.arrays[:shist1] = copy(atoms.arrays[:shelldisp])
-    atoms.arrays[:shist2] = copy(atoms.arrays[:shelldisp])
-    atoms.arrays[:shist3] = copy(atoms.arrays[:shelldisp])
+function _init_shist!(atoms::Atoms; order::Int = 2)
+    0 <= order <= SHELL_EXTRAP_MAX_ORDER ||
+        error("_init_shist!: order must be in 0:$SHELL_EXTRAP_MAX_ORDER (got $order)")
+    for j in 1:_shist_slots(order)
+        atoms.arrays[_shist_key(j)] = copy(atoms.arrays[:shelldisp])
+    end
     return 0
 end
 
-"""
-    _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int)
+"Highest polynomial order of the shell predictor (`shell_extrap_order`)."
+const SHELL_EXTRAP_MAX_ORDER = 4
 
-Write the 3-point predictor `3·s(t) − 3·s(t−1) + s(t−2)` into `:shelldisp`
-as the shell-CG initial guess. No-op during warmup (`shist_count < 3`),
-where the history slots still hold initialisation copies that must never
-be read.
+const _SHIST_KEYS = (:shist1, :shist2, :shist3, :shist4, :shist5)
+_shist_key(j::Int) = _SHIST_KEYS[j]
+_shist_slots(order::Int) = max(3, order + 1)
+_shist_nslots(atoms::Atoms) = count(k -> haskey(atoms.arrays, k), _SHIST_KEYS)
+
 """
-function _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int)
-    if shist_count >= 3
-        @. atoms.arrays[:shelldisp] = 3*atoms.arrays[:shist1] - 3*atoms.arrays[:shist2] + atoms.arrays[:shist3]
+    _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int; order::Int = 2)
+
+Write the order-`order` polynomial predictor through the last `order + 1`
+converged shell displacements into `:shelldisp` as the shell-CG initial
+guess (Newton backward difference, equal steps):
+
+    s_pred = Σ_{j=1}^{k+1} (−1)^{j+1} C(k+1, j) · s(t−j+1)
+
+| order | predictor |
+|:-----:|:----------|
+| 0 | `s(t)` (previous converged value) |
+| 1 | `2s(t) − s(t−1)` |
+| 2 | `3s(t) − 3s(t−1) + s(t−2)` (default, historical) |
+| 3 | `4s(t) − 6s(t−1) + 4s(t−2) − s(t−3)` |
+| 4 | `5s(t) − 10s(t−1) + 10s(t−2) − 5s(t−3) + s(t−4)` |
+
+No-op during warmup (`shist_count < order + 1`), where the history slots
+still hold initialisation copies that must never be read. The `order = 2`
+branch is the historical expression verbatim (bitwise-identical runs).
+"""
+function _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int; order::Int = 2)
+    shist_count >= order + 1 || return nothing
+    a = atoms.arrays
+    sd = a[:shelldisp]
+    if order == 2
+        @. sd = 3*a[:shist1] - 3*a[:shist2] + a[:shist3]
+    elseif order == 0
+        sd .= a[:shist1]
+    elseif order == 1
+        @. sd = 2*a[:shist1] - a[:shist2]
+    elseif order == 3
+        @. sd = 4*a[:shist1] - 6*a[:shist2] + 4*a[:shist3] - a[:shist4]
+    elseif order == 4
+        @. sd = 5*a[:shist1] - 10*a[:shist2] + 10*a[:shist3] - 5*a[:shist4] + a[:shist5]
+    else
+        error("_extrapolate_shelldisp!: order must be in 0:$SHELL_EXTRAP_MAX_ORDER (got $order)")
     end
     return nothing
 end
@@ -90,12 +127,13 @@ end
 """
     _rotate_shist!(atoms::Atoms, shist_count::Int) -> Int
 
-Shift the history by one step (`:shist1` becomes the current `:shelldisp`)
-and return the incremented rotation count.
+Shift the history by one step (`:shist1` becomes the current `:shelldisp`,
+every registered slot `:shistj` moves to `:shist(j+1)`) and return the incremented rotation count.
 """
 function _rotate_shist!(atoms::Atoms, shist_count::Int)
-    atoms.arrays[:shist3] .= atoms.arrays[:shist2]
-    atoms.arrays[:shist2] .= atoms.arrays[:shist1]
+    for j in _shist_nslots(atoms):-1:2
+        atoms.arrays[_shist_key(j)] .= atoms.arrays[_shist_key(j - 1)]
+    end
     atoms.arrays[:shist1] .= atoms.arrays[:shelldisp]
     return shist_count + 1
 end
@@ -141,7 +179,8 @@ params, and the MLIP alike).
   here with a warning).
 - `:cgtol`, `:cgmaxiter` — shell relaxation tolerance per MD step.
 - `:shell_dynamics` (optional) — `:scf` (default; per-step CG relaxation
-  from the 3-point predictor) or `:xlbomd` (shadow XL-BOMD, Issue #149:
+  from the polynomial predictor of order `:shell_extrap_order`, default 2 =
+  3-point) or `:xlbomd` (shadow XL-BOMD, Issue #149:
   an auxiliary shell field propagated by its own time-reversible Verlet,
   with the dynamics running on the exact gradient of the shadow energy —
   no SCF iterations, ~3 force evaluations per step). `:xlbomd` rejects
@@ -335,7 +374,8 @@ function npt!(atoms::Atoms, params)
         total_mfrac_ref(atoms, params)
     end
 
-    shist_count = _init_shist!(atoms)
+    extrap_order = get(params, :shell_extrap_order, 2)
+    shist_count = _init_shist!(atoms; order = extrap_order)
     xl = xl_init!(atoms, params)   # nothing unless shell_dynamics = :xlbomd
 
     for step in 1:params[:nsteps]
@@ -349,7 +389,7 @@ function npt!(atoms::Atoms, params)
         atoms.arrays[:pos] .+= ((atoms.arrays[:velo] * params[:timestep]) * (atoms.info[:lattice] \ I))
         # The XL path owns its own shell predictor (the auxiliary field), so
         # the polynomial extrapolation is skipped there.
-        xl === nothing && _extrapolate_shelldisp!(atoms, shist_count)
+        xl === nothing && _extrapolate_shelldisp!(atoms, shist_count; order = extrap_order)
 
         atoms = rebuild_lists!(fs, atoms, params, arrtyp, dom)
 

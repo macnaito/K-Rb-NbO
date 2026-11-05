@@ -60,4 +60,50 @@ using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
         _extrapolate_shelldisp!(sorted, cnt)
         @test sorted.arrays[:shelldisp] ≈ (3 .* sval(3) .- 3 .* sval(2) .+ sval(1))[perm, :]
     end
+
+    @testset "selectable predictor order 0:4 (shell_extrap_order)" begin
+        binom(n, k) = factorial(n) ÷ (factorial(k) * factorial(n - k))
+        for order in 0:4
+            atoms = make_atoms(lat, frac, ones(Int, N))
+            sd = atoms.arrays[:shelldisp]
+            cnt = _init_shist!(atoms; order = order)
+            nslots = max(3, order + 1)
+            @test all(haskey(atoms.arrays, Symbol(:shist, j)) for j in 1:nslots)
+            @test !haskey(atoms.arrays, Symbol(:shist, nslots + 1))
+            # Smooth history s(k) = c0 + c1·k + … + c_order·k^order: an
+            # order-k predictor reproduces a degree-k polynomial exactly.
+            coef = [randn(FMD.FPPREC, N, 3) for _ in 0:order]
+            spoly(k) = sum(coef[p + 1] .* FMD.FPPREC(k)^p for p in 0:order)
+            for k in 1:order + 1
+                sd .= spoly(k)
+                before = copy(sd)
+                _extrapolate_shelldisp!(atoms, cnt; order = order)
+                @test sd == before                 # warmup: no-op
+                cnt = _rotate_shist!(atoms, cnt)
+            end
+            sd .= 0
+            _extrapolate_shelldisp!(atoms, cnt; order = order)
+            @test sd ≈ spoly(order + 2) rtol = 1e-10
+            # Generic coefficient form on an arbitrary (non-polynomial) history.
+            hist = [atoms.arrays[Symbol(:shist, j)] for j in 1:order + 1]
+            @test sd ≈ sum((-1)^(j + 1) * binom(order + 1, j) .* hist[j] for j in 1:order + 1)
+            # Rotation shifts every registered slot.
+            snap = [copy(atoms.arrays[Symbol(:shist, j)]) for j in 1:nslots]
+            sd .= sval(7)
+            cnt = _rotate_shist!(atoms, cnt)
+            @test atoms.arrays[:shist1] == sval(7)
+            @test all(atoms.arrays[Symbol(:shist, j)] == snap[j - 1] for j in 2:nslots)
+        end
+        # Default keyword equals the historical 3-point predictor bitwise.
+        a1 = make_atoms(lat, frac, ones(Int, N)); a2 = make_atoms(lat, frac, ones(Int, N))
+        c1 = _init_shist!(a1); c2 = _init_shist!(a2; order = 2)
+        for k in 1:3
+            a1.arrays[:shelldisp] .= sval(k) .+ k^2; a2.arrays[:shelldisp] .= a1.arrays[:shelldisp]
+            c1 = _rotate_shist!(a1, c1); c2 = _rotate_shist!(a2, c2)
+        end
+        _extrapolate_shelldisp!(a1, c1); _extrapolate_shelldisp!(a2, c2; order = 2)
+        @test a1.arrays[:shelldisp] == a2.arrays[:shelldisp]
+        @test a1.arrays[:shelldisp] == 3 .* a1.arrays[:shist1] .- 3 .* a1.arrays[:shist2] .+ a1.arrays[:shist3]
+        @test_throws ErrorException _init_shist!(make_atoms(lat, frac, ones(Int, N)); order = 5)
+    end
 end
