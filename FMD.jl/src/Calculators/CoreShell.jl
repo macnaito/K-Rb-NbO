@@ -184,6 +184,15 @@ guard is `fcount < cgmaxiter` and the uphill-correction branch adds a
 second evaluation inside an iteration, so the returned value can reach
 `cgmaxiter + 1`.
 
+The returned core force is `F_core + F_shell` (`:forces .+= :shellforces`):
+the dynamics moves a core at fixed `:shelldisp`, so its shell moves with
+it and the exact gradient of the energy at the current shell positions is
+`−∂E/∂r|_shelldisp = F_core + F_shell`. With fully relaxed shells
+(`F_shell = 0`) this is the plain core force; with the residual the CG
+leaves at `cgtol`, omitting it leaks the residual's work `−F_shell·Δr` into
+the conserved energy every step (the XL-BOMD path adds it the same way).
+`:shellforces` itself is left as is.
+
 Reuses `nl` (built by the caller via [`neighborlist`](@ref)) and `coulomb`
 (an [`EwaldInfo`](@ref) or [`PMEInfo`](@ref) — `cellupdate!` is invoked
 internally so passing a stale `coulomb` after a cell change is safe).
@@ -241,6 +250,9 @@ function calculate!(::CoreShell, atoms::Atoms, nl::NeighborList, coulomb::Coulom
     end
 
     core_forces!(atoms, nl, coulomb, prms)
+    # The shell rides along when the core moves at fixed :shelldisp, so the
+    # core force must carry the CG residual too (see the docstring).
+    arr[:forces] .+= arr[:shellforces]
 
     return fcount
 end
