@@ -99,15 +99,26 @@ def main():
     # 保存量 + W_d（シェル残差の仕事の累積）と残差の向きの偏り cos（XL-BOMD では NaN）
     hw = [r[20] for r in rows]
     has_hw = all(x is not None and math.isfinite(x) for x in hw)
-    # cos はステップごとにばらつくので累積平均を描く．シェルが動かなかった
-    # ステップ（CG なし・外挿なし）は NaN なので平均から除く
-    cosmean, csum, ccount = [], 0.0, 0
+    # cos はステップごとにばらつくので，直近 COS_WINDOW ステップの単純移動平均
+    # （後方窓）を描く．最初の COS_WINDOW−1 ステップは窓が足りないので，そこまでの
+    # 全ステップの平均．シェルが動かなかったステップ（CG なし・外挿なし）は NaN
+    # なので窓から除く（窓内に有効値が無ければ直前の値を保つ）
+    COS_WINDOW = 100
+    cosmean, cwin, csum, last = [], [], 0.0, 0.0
     for r in rows:
-        if r[21] is not None and math.isfinite(r[21]):
-            csum += r[21]
-            ccount += 1
-        cosmean.append(csum / ccount if ccount else 0.0)
-    has_cos = ccount > 0
+        v = r[21] if (r[21] is not None and math.isfinite(r[21])) else None
+        cwin.append(v)
+        if v is not None:
+            csum += v
+        if len(cwin) > COS_WINDOW:
+            old = cwin.pop(0)
+            if old is not None:
+                csum -= old
+        nvalid = sum(x is not None for x in cwin)
+        if nvalid:
+            last = csum / nvalid
+        cosmean.append(last)
+    has_cos = any(r[21] is not None and math.isfinite(r[21]) for r in rows)
 
     charts = [
         dict(id="temp", title="温度", unit="K", series=[dict(name="温度", y=temp)],
@@ -130,7 +141,7 @@ def main():
         charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å",
                            series=[dict(name="rms", y=[x * HA_PER_BOHR_TO_MEV_PER_A for x in rms])]))
     if has_cos:
-        charts.append(dict(id="cos", title="シェル残差の向きの偏り（cos の累積平均）", unit="無次元",
+        charts.append(dict(id="cos", title=f"シェル残差の向きの偏り（cos の {COS_WINDOW} ステップ移動平均）", unit="無次元",
                            series=[dict(name="cos", y=cosmean)], ref=dict(y=0, label="0")))
     # 長い計算では HTML が重くなるので，最大 MAXPTS 点に間引く（等間隔）．
     # 有効数字も 7 桁に丸める（グラフと表には十分）
