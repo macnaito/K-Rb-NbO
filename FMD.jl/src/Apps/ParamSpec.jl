@@ -420,13 +420,27 @@ function _check_control_params(p)
     if haskey(p, :shell_dynamics) && !(sd in (:scf, :xlbomd))
         push!(msgs, "shell_dynamics must be :scf or :xlbomd (got $(repr(sd)))")
     end
-    if haskey(p, :shell_extrap_order)
-        o = p[:shell_extrap_order]
-        o isa Integer && !(o isa Bool) && 0 <= o <= 4 ||
-            push!(msgs, "shell_extrap_order must be an Integer in 0:4 (got $(repr(o)))")
-        sd === :xlbomd &&
-            push!(msgs, ":shell_extrap_order is only read by shell_dynamics = :scf — " *
-                        "the :xlbomd path has its own predictor (drop it)")
+    # Shell-CG predictor (:scf only): :poly (default) reads
+    # :shell_extrap_order, :aspc reads :shell_aspc_k.
+    pr = get(p, :shell_predictor, :poly)
+    if haskey(p, :shell_predictor) && !(pr in (:poly, :aspc))
+        push!(msgs, "shell_predictor must be :poly or :aspc (got $(repr(pr)))")
+    end
+    for (k, hi, owner) in ((:shell_extrap_order, 4, :poly), (:shell_aspc_k, 3, :aspc))
+        haskey(p, k) || continue
+        o = p[k]
+        o isa Integer && !(o isa Bool) && 0 <= o <= hi ||
+            push!(msgs, "$k must be an Integer in 0:$hi (got $(repr(o)))")
+        pr === owner ||
+            push!(msgs, ":$k is only read by shell_predictor = $(repr(owner)) " *
+                        "(got shell_predictor = $(repr(pr))) — drop it")
+    end
+    if sd === :xlbomd
+        for k in (:shell_predictor, :shell_extrap_order, :shell_aspc_k)
+            haskey(p, k) &&
+                push!(msgs, ":$k is only read by shell_dynamics = :scf — " *
+                            "the :xlbomd path has its own predictor (drop it)")
+        end
     end
     if sd === :xlbomd
         haskey(p, :polarization_umbrella) &&
@@ -516,9 +530,10 @@ SPECS[:NPTMD] = ParamSpec(
      # :xlbomd only — all conditionally checked in _check_control_params.
      # Deliberately not in default_params: adding keys there would change
      # the NamedTuple shape the precompile workload mirrors.
-     # :shell_extrap_order (default 2, read in npt!) — order of the :scf
-     # shell-CG predictor; same NamedTuple-shape reason.
-     :shell_dynamics, :shell_extrap_order, :xl_kappa, :xl_warmup, :xl_max_deviation,
+     # :shell_predictor (:poly default / :aspc), :shell_extrap_order
+     # (:poly order, default 2) and :shell_aspc_k (:aspc k, default 2) —
+     # the :scf shell-CG predictor, read in npt!; same NamedTuple-shape reason.
+     :shell_dynamics, :shell_predictor, :shell_extrap_order, :shell_aspc_k, :xl_kappa, :xl_warmup, :xl_max_deviation,
      :xl_kernel, :xl_kernel_order, :xl_kernel_spectrum],
     Dict{Symbol,Vector{Symbol}}(),
     Function[

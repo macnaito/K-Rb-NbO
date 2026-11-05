@@ -18,41 +18,82 @@ using MPI
 # the integration loop.
 
 """
-    _init_shist!(atoms::Atoms; order::Int = 2) -> Int
+    _init_shist!(atoms::Atoms; predictor::Symbol = :poly, order::Int = 2) -> Int
 
 Register the shell-displacement extrapolation history
-`atoms.arrays[:shist1..n]`, `n = max(3, order + 1)` (initialised to copies
-of the current `:shelldisp`), and return the initial rotation count `0`.
-Living in `atoms.arrays` means the `CellList` re-sort (`atoms[idx]`)
-permutes the history together with every other per-atom array — no manual
-re-ordering by the caller. At least three slots are always kept so the
-default `order = 2` layout (`:shist1..3`) is unchanged.
+`atoms.arrays[:shist1..n]` (initialised to copies of the current
+`:shelldisp`) and return the initial rotation count `0`. `n` is the
+number of points the predictor reads ([`_shell_predictor_npoints`](@ref)),
+but at least 3, so the default `:poly`/`order = 2` layout (`:shist1..3`)
+is unchanged. Living in `atoms.arrays` means the `CellList` re-sort
+(`atoms[idx]`) permutes the history together with every other per-atom
+array — no manual re-ordering by the caller.
 """
-function _init_shist!(atoms::Atoms; order::Int = 2)
-    0 <= order <= SHELL_EXTRAP_MAX_ORDER ||
-        error("_init_shist!: order must be in 0:$SHELL_EXTRAP_MAX_ORDER (got $order)")
-    for j in 1:_shist_slots(order)
+function _init_shist!(atoms::Atoms; predictor::Symbol = :poly, order::Int = 2)
+    _check_shell_predictor(predictor, order)
+    for j in 1:max(3, _shell_predictor_npoints(predictor, order))
         atoms.arrays[_shist_key(j)] = copy(atoms.arrays[:shelldisp])
     end
     return 0
 end
 
-"Highest polynomial order of the shell predictor (`shell_extrap_order`)."
+"Highest order of the `:poly` shell predictor (`shell_extrap_order`)."
 const SHELL_EXTRAP_MAX_ORDER = 4
+"Highest `k` of the `:aspc` shell predictor (`shell_aspc_k`)."
+const SHELL_ASPC_MAX_K = 3
 
 const _SHIST_KEYS = (:shist1, :shist2, :shist3, :shist4, :shist5)
 _shist_key(j::Int) = _SHIST_KEYS[j]
-_shist_slots(order::Int) = max(3, order + 1)
 _shist_nslots(atoms::Atoms) = count(k -> haskey(atoms.arrays, k), _SHIST_KEYS)
 
 """
-    _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int; order::Int = 2)
+    _shell_predictor_npoints(predictor, order) -> Int
 
-Write the order-`order` polynomial predictor through the last `order + 1`
-converged shell displacements into `:shelldisp` as the shell-CG initial
-guess (Newton backward difference, equal steps):
+History points the predictor reads: `order + 1` for `:poly`, `k + 2` for
+`:aspc` (`order` is ASPC's `k`).
+"""
+function _shell_predictor_npoints(predictor::Symbol, order::Int)
+    _check_shell_predictor(predictor, order)
+    return predictor === :poly ? order + 1 : order + 2
+end
 
-    s_pred = Σ_{j=1}^{k+1} (−1)^{j+1} C(k+1, j) · s(t−j+1)
+function _check_shell_predictor(predictor::Symbol, order::Int)
+    if predictor === :poly
+        0 <= order <= SHELL_EXTRAP_MAX_ORDER ||
+            error("shell predictor :poly: order must be in 0:$SHELL_EXTRAP_MAX_ORDER (got $order)")
+    elseif predictor === :aspc
+        0 <= order <= SHELL_ASPC_MAX_K ||
+            error("shell predictor :aspc: k must be in 0:$SHELL_ASPC_MAX_K (got $order)")
+    else
+        error("shell predictor must be :poly or :aspc (got $(repr(predictor)))")
+    end
+    return nothing
+end
+
+"""
+    _aspc_coeffs(k) -> Vector{Rational{Int}}
+
+Kolafa's ASPC predictor coefficients (J. Comput. Chem. 25, 335 (2004)),
+`B_j = (−1)^(j+1) · j · C(2k+4, k+2−j) / C(2k+2, k+1)`, `j = 1..k+2`, applied
+as `s_pred = Σ_j B_j · s(t−j+1)`. They sum to 1 and reproduce a linear
+history exactly (not a quadratic one, for any `k`): the extra points buy
+stability and time reversibility of the predictor–corrector, not order.
+k = 0: (2, −1); 1: (5/2, −2, 1/2); 2: (14/5, −14/5, 6/5, −1/5);
+3: (3, −24/7, 27/14, −4/7, 1/14).
+"""
+_aspc_coeffs(k::Int) =
+    [(-1)^(j + 1) * j * binomial(2k + 4, k + 2 - j) // binomial(2k + 2, k + 1) for j in 1:k + 2]
+
+"""
+    _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int;
+                            predictor::Symbol = :poly, order::Int = 2)
+
+Write the shell-CG initial guess into `:shelldisp` from the last converged
+shell displacements `s(t), s(t−1), …` (`:shist1, :shist2, …`).
+
+`predictor = :poly` — order-`order` polynomial through the last
+`order + 1` points (Newton backward difference, equal steps),
+`s_pred = Σ_{j=1}^{k+1} (−1)^{j+1} C(k+1, j) · s(t−j+1)`:
 
 | order | predictor |
 |:-----:|:----------|
@@ -62,15 +103,28 @@ guess (Newton backward difference, equal steps):
 | 3 | `4s(t) − 6s(t−1) + 4s(t−2) − s(t−3)` |
 | 4 | `5s(t) − 10s(t−1) + 10s(t−2) − 5s(t−3) + s(t−4)` |
 
-No-op during warmup (`shist_count < order + 1`), where the history slots
-still hold initialisation copies that must never be read. The `order = 2`
-branch is the historical expression verbatim (bitwise-identical runs).
+`predictor = :aspc` — the predictor half of Kolafa's ASPC with `k = order`
+([`_aspc_coeffs`](@ref), `k + 2` points). Only the predictor is used: the
+CG then relaxes the shells to `cgtol` as usual (no ASPC corrector step),
+so the surface the dynamics runs on is unchanged.
+
+No-op during warmup (`shist_count` below the number of points read),
+where the history slots still hold initialisation copies that must never
+be read. The `:poly`/`order = 2` branch is the historical expression
+verbatim (bitwise-identical runs).
 """
-function _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int; order::Int = 2)
-    shist_count >= order + 1 || return nothing
+function _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int;
+                                 predictor::Symbol = :poly, order::Int = 2)
+    shist_count >= _shell_predictor_npoints(predictor, order) || return nothing
     a = atoms.arrays
     sd = a[:shelldisp]
-    if order == 2
+    if predictor === :aspc
+        B = FPPREC.(_aspc_coeffs(order))
+        sd .= B[1] .* a[:shist1]
+        for j in 2:length(B)
+            sd .+= B[j] .* a[_shist_key(j)]
+        end
+    elseif order == 2
         @. sd = 3*a[:shist1] - 3*a[:shist2] + a[:shist3]
     elseif order == 0
         sd .= a[:shist1]
@@ -78,10 +132,8 @@ function _extrapolate_shelldisp!(atoms::Atoms, shist_count::Int; order::Int = 2)
         @. sd = 2*a[:shist1] - a[:shist2]
     elseif order == 3
         @. sd = 4*a[:shist1] - 6*a[:shist2] + 4*a[:shist3] - a[:shist4]
-    elseif order == 4
+    else  # order == 4 (range checked in _shell_predictor_npoints)
         @. sd = 5*a[:shist1] - 10*a[:shist2] + 10*a[:shist3] - 5*a[:shist4] + a[:shist5]
-    else
-        error("_extrapolate_shelldisp!: order must be in 0:$SHELL_EXTRAP_MAX_ORDER (got $order)")
     end
     return nothing
 end
@@ -230,8 +282,9 @@ params, and the MLIP alike).
   here with a warning).
 - `:cgtol`, `:cgmaxiter` — shell relaxation tolerance per MD step.
 - `:shell_dynamics` (optional) — `:scf` (default; per-step CG relaxation
-  from the polynomial predictor of order `:shell_extrap_order`, default 2 =
-  3-point) or `:xlbomd` (shadow XL-BOMD, Issue #149:
+  from the predictor `:shell_predictor` — `:poly` of order
+  `:shell_extrap_order`, default 2 = 3-point, or `:aspc` with
+  `k = :shell_aspc_k`) or `:xlbomd` (shadow XL-BOMD, Issue #149:
   an auxiliary shell field propagated by its own time-reversible Verlet,
   with the dynamics running on the exact gradient of the shadow energy —
   no SCF iterations, ~3 force evaluations per step). `:xlbomd` rejects
@@ -435,8 +488,12 @@ function npt!(atoms::Atoms, params)
         total_mfrac_ref(atoms, params)
     end
 
-    extrap_order = get(params, :shell_extrap_order, 2)
-    shist_count = _init_shist!(atoms; order = extrap_order)
+    # Shell-CG predictor: :poly with order shell_extrap_order (default 2,
+    # the historical 3-point) or :aspc with k = shell_aspc_k (default 2).
+    extrap_pred = get(params, :shell_predictor, :poly)
+    extrap_order = extrap_pred === :aspc ? get(params, :shell_aspc_k, 2) :
+                                           get(params, :shell_extrap_order, 2)
+    shist_count = _init_shist!(atoms; predictor = extrap_pred, order = extrap_order)
     xl = xl_init!(atoms, params)   # nothing unless shell_dynamics = :xlbomd
     # Accumulated shell-residual work W_d (see _shell_work_step!). The XL
     # path runs no CG on its shadow steps and its conserved quantity is the
@@ -455,7 +512,8 @@ function npt!(atoms::Atoms, params)
         atoms.arrays[:pos] .+= ((atoms.arrays[:velo] * params[:timestep]) * (atoms.info[:lattice] \ I))
         # The XL path owns its own shell predictor (the auxiliary field), so
         # the polynomial extrapolation is skipped there.
-        xl === nothing && _extrapolate_shelldisp!(atoms, shist_count; order = extrap_order)
+        xl === nothing && _extrapolate_shelldisp!(atoms, shist_count;
+                                                 predictor = extrap_pred, order = extrap_order)
 
         atoms = rebuild_lists!(fs, atoms, params, arrtyp, dom)
 
