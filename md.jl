@@ -10,7 +10,7 @@ dt = 1.0/UNITS[:fs]   # 1 fs
 
 params = (;
      pot...,
-     output_dir = "out",
+     output_dir = "out_nhc_0.3fs_1e-6_verification",
      input = "input.xyz",
      backend = :cpu,              # Mac (GPU 無し) で実行．GPU クラスタでは :cuda
      pme_meshsize = 1.0,
@@ -18,13 +18,13 @@ params = (;
      cgtol = 1e-6,
      cgmaxiter = 200,
      skin = 0.2,
-     timestep = dt,
+     timestep = 0.3dt,
      thermostat = :nhc,
      tau_t = 100dt,
      barostat = :mttk,
      tau_p = 500dt,
      output_interval = 1000,
-     nsteps = 10_000,
+     nsteps =33_334,
      target_stress = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
      target_temperature = 150.0,
      initial_temperature = 150.0,

@@ -80,28 +80,34 @@ def figure(runs, labels, title, out, window_fs):
     print(f"wrote {out}")
 
 
-def html(runs, labels, title, out, window_fs, grid_fs=5.0):
+def html(runs, labels, title, out, window_fs, grid_fs=5.0, tmax_ps=None):
     """ΔH′ と CG 反復回数を plot_log.py の HTML 部品で描く．横軸は時間 [ps]．
 
     dt の違う計算を同じ横軸に載せるため，grid_fs ごとの時刻の値を各計算から拾う
-    （grid_fs は全ての dt の倍数であること）．
+    （grid_fs は全ての dt の倍数であること）．tmax_ps を与えるとそこまでを描き，
+    表の数値（傾き・最大 |ΔH′|・CG 回数）もその区間で求める．
     """
     for r in runs:
         if abs(grid_fs / r["dt"] - round(grid_fs / r["dt"])) > 1e-9:
             raise ValueError(f"grid_fs={grid_fs} が dt={r['dt']} の倍数ではありません")
     tmax = min(r["t"][-1] for r in runs) * 1000
+    if tmax_ps is not None:
+        if tmax_ps * 1000 > tmax + 1e-9:
+            raise ValueError(f"tmax_ps={tmax_ps} が一番短い計算（{tmax / 1000:g} ps）より長い")
+        tmax = tmax_ps * 1000
     times = np.arange(grid_fs, tmax + 1e-9, grid_fs)               # fs
     def at(r, y):
         return [float(f"{v:.7g}") for v in y[np.rint(times / r["dt"]).astype(int) - 1]]
     fits, rows = [], []
     for i, (r, lab) in enumerate(zip(runs, labels)):
-        f = r["t"] >= 0.5
+        w = r["t"] <= tmax / 1000 + 1e-9                             # 描く区間
+        f = w & (r["t"] >= 0.5)
         slope, icpt = np.polyfit(r["t"][f], r["dh"][f], 1)
         x0, x1 = 0.5, tmax / 1000
         fits.append(dict(c=i, x0=x0, y0=icpt + slope * x0, x1=x1, y1=icpt + slope * x1))
-        ncg = r["ncg"].mean()
+        ncg = r["ncg"][w].mean()
         rows.append(f"<tr><td style=\"text-align:left;white-space:nowrap\">{lab}</td><td>{slope:.4f}</td>"
-                    f"<td>{np.abs(r['dh']).max():.4f}</td><td>{ncg:.1f}</td><td>{ncg * 1000 / r['dt']:,.0f}</td></tr>")
+                    f"<td>{np.abs(r['dh'][w]).max():.4f}</td><td>{ncg:.1f}</td><td>{ncg * 1000 / r['dt']:,.0f}</td></tr>")
     series = lambda key: [dict(name=lab, y=at(r, r[key] if key != "ncgavg" else movavg(r["ncg"], max(1, round(window_fs / r["dt"])))))
                           for r, lab in zip(runs, labels)]
     charts = [
@@ -111,7 +117,7 @@ def html(runs, labels, title, out, window_fs, grid_fs=5.0):
              series=series("ncgavg")),
     ]
     table = ('<section class="card" style="margin-bottom:16px"><h2>まとめ<span class="unit">'
-             'ΔH′ の傾きは 0.5 ps 以降の直線フィット．CG 回数/ps は 1 ps あたりの計算コストの目安</span></h2>'
+             f'0〜{tmax / 1000:g} ps．ΔH′ の傾きは 0.5 ps 以降の直線フィット．CG 回数/ps は 1 ps あたりの計算コストの目安</span></h2>'
              '<table><thead><tr><th style="text-align:left">計算</th><th>ΔH′ の傾き [meV/原子/ps]</th>'
              '<th>最大 |ΔH′| [meV/原子]</th><th>CG 回数/ステップ</th><th>CG 回数/ps</th></tr></thead>'
              f'<tbody>{"".join(rows)}</tbody></table></section>')
@@ -120,7 +126,7 @@ def html(runs, labels, title, out, window_fs, grid_fs=5.0):
                                                         charts=charts, meta=meta), ensure_ascii=False))
     page = (page.replace("<title>MD ログ</title>", "<title>NHC スキャン比較</title>")
                 .replace("<h1>MD ログ</h1>", "<h1>NHC スキャン: 保存量とシェル緩和回数</h1>")
-                .replace("${DATA.meta.nsteps} ステップ", f"10 ps・{grid_fs:g} fs ごとに表示")
+                .replace("${DATA.meta.nsteps} ステップ", f"{tmax / 1000:g} ps・{grid_fs:g} fs ごとに表示")
                 .replace("<b>ステップ ${step[k]}</b>", "<b>${step[k]} ps</b>")
                 .replace('[["ステップ", step, true]]', '[["時間 (ps)", step, false]]')
                 .replace("ステップごと）`", "点ごと）`")
@@ -171,7 +177,7 @@ def main():
     html(dt_runs, dt_lab, "NHC (M=3) + MTTK, 150 K：dt の比較（cgtol = 1e-6）",
          args.outdir / "dt_compare.html", args.window)
     html(cg_runs, cg_lab, "NHC (M=3) + MTTK, 150 K：cgtol の比較（dt = 0.5 fs）",
-         args.outdir / "cgtol_compare.html", args.window)
+         args.outdir / "cgtol_compare.html", args.window, tmax_ps=5.0)
     lines = (["[dt スキャン, cgtol = 1e-6]"] + summary(dt_runs, dt_lab, args.avg_from)
              + ["", "[cgtol スキャン, dt = 0.5 fs]"] + summary(cg_runs, cg_lab, args.avg_from))
     (args.outdir / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -7,7 +7,7 @@
 
 フォルダ名 out_nhc_<dt>fs_<cgtol>_… / out_fix_nhc_<dt>fs_<cgtol>… から dt・cgtol を読み，
 同じ (dt, cgtol) の修正前・修正後を組にする．修正後の計算の方が短いので，
-各組は短い方の時間（修正後の長さ）までで比べる．横軸は時間 [ps]（GRID_FS ごとの値）．
+各組は TMAX_PS まで（None なら短い方＝修正後の長さまで）で比べる．横軸は時間 [ps]（GRID_FS ごとの値）．
 """
 import json
 import re
@@ -18,6 +18,7 @@ from plot_log import HA_PER_BOHR_TO_MEV_PER_A, HARTREE_EV, TEMPLATE, natoms, nce
 
 GRID_FS = 1.0     # 横軸の間隔 [fs]．全ての dt の倍数であること
 FIT_FROM_PS = 0.5  # ΔH′ の傾きの直線フィットはこの時刻以降
+TMAX_PS = 1.0      # 横軸の最大値 [ps]（表の数値もここまでで求める）．None なら一番短い計算の長さ
 
 
 def load(d):
@@ -55,6 +56,10 @@ def stats(r, nk):
 def page(pairs, key_label, title, out):
     """pairs: [(ラベル, 修正前, 修正後)]（2〜3 組）．"""
     tmax_fs = min(min(b["t"][-1], a["t"][-1]) for _, b, a in pairs) * 1000
+    if TMAX_PS is not None:
+        if TMAX_PS * 1000 > tmax_fs + 1e-9:
+            sys.exit(f"TMAX_PS={TMAX_PS} が一番短い計算（{tmax_fs / 1000:g} ps）より長い")
+        tmax_fs = TMAX_PS * 1000
     times = [GRID_FS * k for k in range(1, int(round(tmax_fs / GRID_FS)) + 1)]
     for _, b, a in pairs:
         for r in (b, a):
