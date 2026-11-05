@@ -356,8 +356,8 @@ end
 # this check may assume presence-or-skip per key.
 function _check_control_params(p)
     msgs = String[]
-    if haskey(p, :thermostat) && !(p[:thermostat] in (:nh, :csvr, :none))
-        push!(msgs, "thermostat must be :nh, :csvr or :none (got $(repr(p[:thermostat])))")
+    if haskey(p, :thermostat) && !(p[:thermostat] in (:nh, :nhc, :csvr, :none))
+        push!(msgs, "thermostat must be :nh, :nhc, :csvr or :none (got $(repr(p[:thermostat])))")
     end
     if haskey(p, :barostat) && !(p[:barostat] in (:mttk, :scr, :none))
         push!(msgs, "barostat must be :mttk, :scr or :none (got $(repr(p[:barostat])))")
@@ -366,8 +366,14 @@ function _check_control_params(p)
     # _build_barostat read :nh / :mttk when the key is absent) so the
     # validator judges the same configuration the driver would run.
     th = get(p, :thermostat, :nh)
-    if th in (:nh, :csvr) && !haskey(p, :tau_t)
+    if th in (:nh, :nhc, :csvr) && !haskey(p, :tau_t)
         push!(msgs, "thermostat = $(repr(th)) requires :tau_t")
+    end
+    if haskey(p, :nhc_length)
+        th === :nhc || push!(msgs, ":nhc_length is only read by thermostat = :nhc " *
+                                   "— drop it (got thermostat = $(repr(th)))")
+        p[:nhc_length] isa Integer && !(p[:nhc_length] isa Bool) && p[:nhc_length] >= 1 ||
+            push!(msgs, "nhc_length must be an Integer >= 1 (got $(repr(p[:nhc_length])))")
     end
     if th === :csvr && haskey(p, :target_temperature) && !(p[:target_temperature] >= 1.0)
         push!(msgs, "thermostat = :csvr requires target_temperature >= 1 K " *
@@ -485,6 +491,10 @@ SPECS[:NPTMD] = ParamSpec(
      :polmap_interval,
      :qref, :dataset_idx, :backend, :mpi, :tau_t, :tau_p, :target_stress,
      :compressibility,
+     # Nosé–Hoover chain length (thermostat = :nhc; default 3 in
+     # _build_thermostat — kept out of default_params for the same
+     # NamedTuple-shape reason as the shell-dynamics keys below).
+     :nhc_length,
      # PME reciprocal-space z-slab decomposition (Issue #195): default on
      # under MPI with P > 1; :pme_dd => false forces the replicated solve
      # (debug / non-CUDA-aware segmented collectives).

@@ -209,7 +209,7 @@ end
         # Unknown method symbols are rejected, not deferred (:berendsen
         # will never exist — wrong ensemble, see Issue #116).
         msg = _verr(:NPTMD, _val_nptmd(; thermostat = :berendsen))
-        @test msg !== nothing && occursin("thermostat must be :nh, :csvr or :none", msg)
+        @test msg !== nothing && occursin("thermostat must be :nh, :nhc, :csvr or :none", msg)
         msg = _verr(:NPTMD, _val_nptmd(; barostat = :berendsen))
         @test msg !== nothing && occursin("barostat must be :mttk, :scr or :none", msg)
 
@@ -242,6 +242,20 @@ end
                                         final_temperature = 0.5))
         @test msg !== nothing &&
               occursin("thermostat = :csvr requires final_temperature >= 1 K", msg)
+
+        # NHC: legal with :tau_t (± :nhc_length); the length is only
+        # read by :nhc and must be an Integer >= 1.
+        @test FMD.validate_params(:NPTMD, _val_nptmd(; thermostat = :nhc)) === nothing
+        @test FMD.validate_params(:NPTMD,
+            _val_nptmd(; thermostat = :nhc, nhc_length = 5)) === nothing
+        msg = _verr(:NPTMD, _drop(_val_nptmd(; thermostat = :nhc), :tau_t))
+        @test msg !== nothing && occursin("thermostat = :nhc requires :tau_t", msg)
+        msg = _verr(:NPTMD, _val_nptmd(; nhc_length = 3))
+        @test msg !== nothing && occursin("only read by thermostat = :nhc", msg)
+        msg = _verr(:NPTMD, _val_nptmd(; thermostat = :nhc, nhc_length = 0))
+        @test msg !== nothing && occursin("nhc_length must be an Integer >= 1", msg)
+        msg = _verr(:NPTMD, _val_nptmd(; thermostat = :nhc, nhc_length = true))
+        @test msg !== nothing && occursin("nhc_length must be an Integer >= 1", msg)
 
         # Value-conditional keys: the active method demands its τ (and the
         # barostat its target stress)…

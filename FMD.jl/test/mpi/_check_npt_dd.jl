@@ -5,7 +5,7 @@
 # gather_frame snapshots. Saves the gathered final state (per-id) for the
 # parent to compare against its serial reference; trajectory outputs
 # (log.txt / Bias.log / step_N.xyz) land in `dir`.
-# mode ∈ normal | tiny | umbrella | csvr | scr | xlbomd* | nlh*.
+# mode ∈ normal | tiny | umbrella | csvr | nhc | scr | xlbomd* | nlh*.
 
 # Forwarding logger that counts @info messages containing `needle` and
 # passes everything through to `parent` (so npt!'s progress lines stay in
@@ -33,7 +33,8 @@ function check_npt_dd(out, dir, mode, backend, comm)
     full = _npt_dd_fixture(mode in ("tiny", "nlh_tiny"); umbrella = mode == "umbrella")
     params = _npt_dd_params(full, dir; tiny = mode in ("tiny", "nlh_tiny"), mpi = true,
                             umbrella = mode == "umbrella",
-                            csvr = mode == "csvr", scr = mode == "scr",
+                            csvr = mode == "csvr", nhc = mode == "nhc",
+                            scr = mode == "scr",
                             xl = mode in ("xlbomd", "xlbomd_cheb"),
                             cheb = mode == "xlbomd_cheb",
                             xlbaro = mode == "xlbomd_baro",

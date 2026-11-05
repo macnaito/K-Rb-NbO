@@ -8,7 +8,8 @@ using Distributions: Chisq
 #  Thermostats and barostats are two orthogonal dispatch families selected
 #  by params[:thermostat] / params[:barostat]:
 #
-#      Thermostat: NoThermostat (:none) | NoseHoover (:nh) | CSVR (:csvr)
+#      Thermostat: NoThermostat (:none) | NoseHoover (:nh) |
+#                  NoseHooverChain (:nhc) | CSVR (:csvr)
 #      Barostat:   NoBarostat  (:none)  | MTTK       (:mttk) | SCR (:scr)
 #
 #  npt! drives them through exactly three entry points:
@@ -61,6 +62,33 @@ cell momenta are thermostatted inside [`MTTK`](@ref).
 """
 mutable struct NoseHoover <: Thermostat
     zeta::Float64
+    work::Float64
+    tau::Float64
+end
+
+"""
+    NoseHooverChain(zeta, work, tau)
+
+Nosé–Hoover chain particle thermostat (`params[:thermostat] = :nhc`;
+Martyna–Klein–Tuckerman, J. Chem. Phys. 97, 2635 (1992)). The chain
+length M = `length(zeta)` comes from `params[:nhc_length]` (default 3).
+
+- `zeta` — frictions ζ₁…ζ_M. ζ₁ acts on the particles,
+  `dζ₁/dt = (2K − (3N−3)kT)/Q₁ − ζ₁ζ₂`; each further link thermostats
+  the previous one, `dζ_j/dt = (Q_{j−1}ζ_{j−1}² − kT)/Q_j − ζ_jζ_{j+1}`
+  (no ζ_{M+1} term for the last link). Masses `Q₁ = (3N−3)·kT·τ_t²`
+  (identical to [`NoseHoover`](@ref)) and `Q_j = kT·τ_t²` for j ≥ 2.
+- `work` — accumulated `∫[(3N−3)·kT·ζ₁ + kT·Σ_{j≥2}ζ_j] dt`, the
+  `g·kT·ξ₁ + kT·Σξ_j` term of the conserved quantity (energy accumulator,
+  as for NoseHoover).
+- `tau`  — time constant τ_t (`params[:tau_t]`, a.u.).
+
+The chain removes the non-ergodicity of a single NH thermostat for stiff
+or nearly harmonic systems. With M = 1 the propagator reduces operation
+for operation to [`NoseHoover`](@ref) (pinned bitwise in test_nhc.jl).
+"""
+mutable struct NoseHooverChain <: Thermostat
+    zeta::Vector{Float64}
     work::Float64
     tau::Float64
 end
@@ -240,6 +268,13 @@ function _build_thermostat(params)
         haskey(params, :tau_t) ||
             error("npt!: thermostat = :nh requires params[:tau_t]")
         return NoseHoover(0.0, 0.0, Float64(params[:tau_t]))
+    elseif kind === :nhc
+        haskey(params, :tau_t) ||
+            error("npt!: thermostat = :nhc requires params[:tau_t]")
+        M = get(params, :nhc_length, 3)
+        M isa Integer && !(M isa Bool) && M >= 1 ||
+            error("npt!: params[:nhc_length] must be an Integer >= 1 (got $(repr(M)))")
+        return NoseHooverChain(zeros(M), 0.0, Float64(params[:tau_t]))
     elseif kind === :csvr
         haskey(params, :tau_t) ||
             error("npt!: thermostat = :csvr requires params[:tau_t]")
@@ -254,7 +289,7 @@ function _build_thermostat(params)
                     _control_rng(params[:seed], _CSVR_SALT), 0.0)
     end
     kind === :none && return NoThermostat()
-    error("npt!: params[:thermostat] must be :nh, :csvr or :none (got $(repr(kind)))")
+    error("npt!: params[:thermostat] must be :nh, :nhc, :csvr or :none (got $(repr(kind)))")
 end
 
 """
@@ -363,6 +398,8 @@ _control_context(params, step, N, tstress) =
 # Extended-variable masses (recomputed per call from the ramped kT, matching
 # the historical behavior; see docstrings of the structs for the formulas).
 _mass_t(th::NoseHoover, c) = (3c.N - 3) * c.kT * th.tau^2
+_mass_chain(th::NoseHooverChain, c, j) =
+    j == 1 ? (3c.N - 3) * c.kT * th.tau^2 : c.kT * th.tau^2
 _mass_b(b::MTTK, c) = c.N * c.kT * b.tau^2
 _mass_cell(b::MTTK, c) = 6 * c.kT * b.tau^2
 
@@ -515,6 +552,45 @@ function _thermo_half!(th::NoseHoover, atoms, c, arrtyp)
     # dξ/dt = ζ: the g·kT·ξ term advances with the scaling it compensates.
     th.work += gkT * th.zeta * c.dt/4
     th.zeta += c.dt/8 * (2kinetic_energy(atoms) - gkT) / Q
+    return nothing
+end
+
+# Generalized force on chain link j times its mass, Q_j·G_j
+# (K = current particle kinetic energy).
+_nhc_drive(th::NoseHooverChain, c, j, K) =
+    j == 1 ? 2K - (3c.N - 3) * c.kT :
+             _mass_chain(th, c, j-1) * th.zeta[j-1]^2 - c.kT
+
+# Kick link j by h·G_j, sandwiched in the damping by the next link
+# (exp(−ζ_{j+1}·h/2) on either side; absent for the last link).
+function _nhc_kick!(th::NoseHooverChain, c, j, K, h)
+    M = length(th.zeta)
+    j < M && (th.zeta[j] *= exp(-th.zeta[j+1] * h/2))
+    th.zeta[j] += h * _nhc_drive(th, c, j, K) / _mass_chain(th, c, j)
+    j < M && (th.zeta[j] *= exp(-th.zeta[j+1] * h/2))
+    return nothing
+end
+
+# Same Δt = dt/4 operator span as NoseHoover: chain half-update (dt/8,
+# top link → particle link), particle scaling + ξ advance (dt/4), chain
+# half-update (dt/8, particle link → top link). Written so that M = 1
+# performs exactly the NoseHoover float operations.
+function _thermo_half!(th::NoseHooverChain, atoms, c, arrtyp)
+    M = length(th.zeta)
+    K = kinetic_energy(atoms)
+    for j in M:-1:1
+        _nhc_kick!(th, c, j, K, c.dt/8)
+    end
+    atoms.arrays[:velo] .*= exp(-th.zeta[1] * c.dt/4)
+    # dξ_j/dt = ζ_j: the g·kT·ξ₁ + kT·Σξ_j terms advance with the scaling.
+    th.work += (3c.N - 3) * c.kT * th.zeta[1] * c.dt/4
+    for j in 2:M
+        th.work += c.kT * th.zeta[j] * c.dt/4
+    end
+    K = kinetic_energy(atoms)
+    for j in 1:M
+        _nhc_kick!(th, c, j, K, c.dt/8)
+    end
     return nothing
 end
 
@@ -718,6 +794,8 @@ end
 _control_energy(::NoThermostat, atoms, c) = 0.0
 _control_energy(th::NoseHoover, atoms, c) =
     _mass_t(th, c)/2 * th.zeta^2 + th.work
+_control_energy(th::NoseHooverChain, atoms, c) =
+    sum(_mass_chain(th, c, j)/2 * th.zeta[j]^2 for j in eachindex(th.zeta)) + th.work
 _control_energy(th::CSVR, atoms, c) = th.work
 _control_energy(::NoBarostat, atoms, c) = 0.0
 _control_energy(b::MTTK, atoms, c) =
@@ -736,6 +814,8 @@ Diagnostic conserved quantity H′ (Hartree) of the active
 thermostat/barostat combination:
 
     H′ = K + U + [Q_T/2·ζ² + g·kT·ξ]            (NoseHoover)
+             + [Σ_j Q_j/2·ζ_j² + g·kT·ξ₁
+                + kT·Σ_{j≥2} ξ_j]                (NoseHooverChain)
              + [Σ K·(1−α²)]                      (CSVR effective energy H̃,
                                                   BDP 2007 Eq. 15)
              + [Q_b/2·Σζ_b² + Q_cell/2·ζ_cell²

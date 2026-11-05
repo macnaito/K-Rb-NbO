@@ -23,6 +23,7 @@ end
 
 function _npt_dd_params(full, outdir; tiny::Bool, mpi::Bool = false,
                         umbrella::Bool = false, csvr::Bool = false,
+                        nhc::Bool = false,
                         scr::Bool = false, xl::Bool = false,
                         cheb::Bool = false, xlbaro::Bool = false,
                         nlh::Bool = false, surface::Bool = false,
@@ -71,10 +72,13 @@ function _npt_dd_params(full, outdir; tiny::Bool, mpi::Bool = false,
          seed = 3,
          output_interval = 3,
          output_dir = outdir)
-    # Appended only for the csvr/scr flavours so the default flavour keeps
+    # Appended only for the csvr/nhc/scr flavours so the default flavour keeps
     # the exact NamedTuple shape mirrored by src/precompile.jl (keys AND
     # order — see its header comment).
     csvr && (p = (; p..., thermostat = :csvr))
+    # NHC: the chain state ζ_j / work is replicated per rank and
+    # driven only by the Allreduced K, so DD must match serial (NH tolerances).
+    nhc && (p = (; p..., thermostat = :nhc, nhc_length = 3))
     scr && (p = (; p..., barostat = :scr,
                  compressibility = UNITS[:GPa] / 24.0))
     # Shadow XL-BOMD with a warmup short enough that the 6-step run
