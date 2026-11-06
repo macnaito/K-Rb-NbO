@@ -17,6 +17,7 @@ params = (;
      efield = [0.0, 0.0, 0.0],
      cgtol = 1e-6,
      cgmaxiter = 200,
+     shell_extrap_order = 2,      # shell CG 初期値の外挿次数 k ∈ 0:4 (直近 k+1 点; 2 = 従来の3点外挿)
      skin = 0.2,
      timestep = dt,
      thermostat = :nh,
