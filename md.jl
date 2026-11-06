@@ -18,16 +18,17 @@ params = (;
      cgtol = 1e-6,
      cgmaxiter = 200,
      skin = 0.2,
-     timestep = dt,
-     thermostat = :nh,
+     timestep = 0.5dt,
+     thermostat = :nhc,
+     shell_extrap_order = 3,   # 0〜4
      tau_t = 100dt,
      barostat = :mttk,
      tau_p = 500dt,
-     output_interval = 1000,
-     nsteps = 10_000,
+     output_interval = 100,
+     nsteps = 6000,
      target_stress = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-     target_temperature = 500.0,
-     initial_temperature = 500.0,
+     target_temperature = 150.0,
+     initial_temperature = 150.0,
 )
 
 params = (; FMD.default_params(Val(:NPTMD), params)..., params...)

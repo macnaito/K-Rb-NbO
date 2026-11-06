@@ -1,59 +1,90 @@
 #!/usr/bin/env python3
-"""複数の out*/log.txt の保存量の変化 ΔH′ を 1 枚のグラフに重ねる（標準ライブラリだけで動く）．
+"""シェル CG 予測子の次数ごとに保存量を並べた HTML を作る．
 
-使い方（KNO フォルダで）:
-    python3 plot_conserved.py                         # out-*_150K_dt=* を全部 → conserved_compare.html
-    python3 plot_conserved.py outA outB ...           # フォルダを指定
+使い方:
+    python3 plot_conserved.py [出力 html] [run ディレクトリ ...]
 
-時間刻みが違う計算を比べるので，横軸はステップ数ではなく時間（ps）．
-刻み幅はフォルダ名の "dt=<数値>fs" から読む．
+run ディレクトリを省略すると out_nhc_0.5fs_1e-6_extrap0〜4 のうち存在するものを使う．
+グラフは 3 枚: ΔH′，Δ(H′ + W_d)，W_d = Δ(H′ + W_d) − ΔH′（いずれも meV/原子）．
+log.txt は 22 列形式（conserved = 18 列目，conserved+W_d = 20 列目，shell_cos = 21 列目，ncg = 22 列目）．
 """
 import json
 import math
-import re
 import sys
 from pathlib import Path
 
-from plot_log import HARTREE_EV, natoms, read_log
+HARTREE_EV = 27.211386245988
+DT_PS = 0.5e-3          # 0.5 fs
+FIT_FROM_PS = 0.5       # 傾きは t ≥ 0.5 ps で最小二乗
 
-MAXPTS = 2000
+HERE = Path(__file__).resolve().parent
 
 
-def dt_fs(folder):
-    m = re.search(r"dt=([0-9.]+)fs", folder.name)
-    if not m:
-        sys.exit(f"{folder}: フォルダ名から dt が読めません（'dt=<数値>fs' を含めてください）")
-    return float(m.group(1))
+def read_run(d):
+    rows = []
+    with open(d / "log.txt") as f:
+        for line in f:
+            v = line.split()
+            if len(v) != 22:
+                sys.exit(f"{d}/log.txt: 22 列でない行があります（{len(v)} 列）．conserved+W_d の列が必要です")
+            rows.append((float(v[17]), float(v[19]), float(v[20]), int(v[21])))
+    snaps = sorted(d.glob("step_*.xyz"))
+    if not snaps:
+        sys.exit(f"{d}: 原子数を取る step_*.xyz がありません")
+    with open(snaps[0]) as f:
+        n = int(f.readline())
+    return rows, n
+
+
+def slope(t, y):
+    pts = [(a, b) for a, b in zip(t, y) if a >= FIT_FROM_PS]
+    m = len(pts)
+    mt = sum(a for a, _ in pts) / m
+    my = sum(b for _, b in pts) / m
+    return sum((a - mt) * (b - my) for a, b in pts) / sum((a - mt) ** 2 for a, _ in pts)
 
 
 def main():
-    folders = [Path(a) for a in sys.argv[1:]] or sorted(Path(".").glob("out-*_150K_dt=*fs"))
-    folders.sort(key=dt_fs, reverse=True)
-    series, stats = [], []
-    for d in folders:
-        rows = read_log(d / "log.txt")
-        snaps = sorted(d.glob("step_*.xyz"))
-        n = natoms(snaps[0]) if snaps else None
-        if not n:
-            sys.exit(f"{d}: step_*.xyz から原子数が読めません")
-        dt = dt_fs(d)
-        h0 = rows[0][17]
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "conserved_extrap.html"
+    dirs = [Path(p) for p in sys.argv[2:]] or [
+        HERE / f"out_nhc_0.5fs_1e-6_extrap{k}" for k in range(5)
+        if (HERE / f"out_nhc_0.5fs_1e-6_extrap{k}" / "log.txt").exists()]
+    if not dirs:
+        sys.exit("run ディレクトリが見つかりません")
+
+    runs, nsteps = [], None
+    for d in dirs:
+        rows, n = read_run(d)
+        nsteps = len(rows) if nsteps is None else min(nsteps, len(rows))
         scale = HARTREE_EV * 1000 / n
-        dh = [(r[17] - h0) * scale for r in rows]
-        t = [(k + 1) * dt / 1000 for k in range(len(rows))]  # ps
-        # ドリフト: 直線フィットの傾き（meV/原子/ps），ゆらぎ: フィットからの RMS
-        tm, ym = sum(t) / len(t), sum(dh) / len(dh)
-        slope = sum((a - tm) * (b - ym) for a, b in zip(t, dh)) / sum((a - tm) ** 2 for a in t)
-        rms = math.sqrt(sum((b - ym - slope * (a - tm)) ** 2 for a, b in zip(t, dh)) / len(t))
-        stats.append(dict(name=f"dt = {dt:g} fs", nsteps=len(rows), final=dh[-1], slope=slope, rms=rms,
-                          maxabs=max(abs(v) for v in dh)))
-        stride = max(1, math.ceil(len(rows) / MAXPTS))
-        keep = sorted(set([0] + list(range(stride - 1, len(rows), stride))))
-        series.append(dict(name=f"dt = {dt:g} fs", x=[float(f"{t[k]:.7g}") for k in keep],
-                           y=[float(f"{dh[k]:.7g}") for k in keep]))
-        print(f"{d}: {len(rows)} steps, dt={dt:g} fs, {n} atoms")
-    out = Path("conserved_compare.html")
-    out.write_text(TEMPLATE.replace("__DATA__", json.dumps(dict(series=series, stats=stats))), encoding="utf-8")
+        h0, hw0 = rows[0][0], rows[0][1]
+        dh = [(r[0] - h0) * scale for r in rows]
+        dhw = [(r[1] - hw0) * scale for r in rows]
+        wd = [b - a for a, b in zip(dh, dhw)]
+        cos = [r[2] for r in rows if math.isfinite(r[2])]
+        name = d.name.removeprefix("out_nhc_0.5fs_1e-6_")
+        label = f"{name[-1]} 次" if name.startswith("extrap") else name
+        runs.append(dict(name=label, dir=d.name, natoms=n, dh=dh, dhw=dhw, wd=wd,
+                         ncg=sum(r[3] for r in rows) / len(rows),
+                         cos=sum(cos) / len(cos) if cos else float("nan")))
+    # 長さを揃える（最短の run に合わせる）
+    t = [(i + 1) * DT_PS for i in range(nsteps)]
+    for r in runs:
+        for k in ("dh", "dhw", "wd"):
+            r[k] = r[k][:nsteps]
+        r["slope_dh"] = slope(t, r["dh"])
+        r["slope_dhw"] = slope(t, r["dhw"])
+
+    charts = [
+        dict(id="dh", title="保存量の変化 ΔH′", key="dh"),
+        dict(id="dhw", title="シェル残差の仕事を足した保存量 Δ(H′ + W_d)", key="dhw"),
+        dict(id="wd", title="シェル残差の仕事 W_d", key="wd"),
+    ]
+    data = dict(t=[round(x, 5) for x in t], charts=charts,
+                runs=[{**r, **{k: [round(v, 6) for v in r[k]] for k in ("dh", "dhw", "wd")}}
+                      for r in runs],
+                natoms=runs[0]["natoms"], fit_from=FIT_FROM_PS)
+    out.write_text(TEMPLATE.replace("__DATA__", json.dumps(data, ensure_ascii=False)), encoding="utf-8")
     print(f"wrote {out}")
 
 
@@ -62,177 +93,159 @@ TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>保存量の比較</title>
+<title>外挿次数と保存量</title>
 <style>
 :root {
   color-scheme: light;
   --surface-0: #f4f3ef; --surface-1: #fcfcfb; --grid: #e6e5df; --axis: #b9b8b0;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #6f6e69;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #8a5cd1;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4;
 }
 @media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --surface-0: #121211; --surface-1: #1a1a19; --grid: #2c2c2a; --axis: #4a4a46;
-    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #9a998f;
-    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #9b72dc;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #9a998f;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-0: #121211; --surface-1: #1a1a19; --grid: #2c2c2a; --axis: #4a4a46;
-  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #9a998f;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #9b72dc;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #9a998f;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--surface-0); color: var(--text-primary);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-}
-main { max-width: 980px; margin: 0 auto; padding: 24px 16px 40px; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { font-size: 20px; margin: 0 0 4px; }
-.sub { color: var(--text-secondary); margin: 0 0 20px; }
-.card { background: var(--surface-1); border-radius: 12px; padding: 14px 14px 8px; position: relative; }
-.card h2 { font-size: 14px; margin: 0; font-weight: 600; }
+.sub { color: var(--text-secondary); margin: 0 0 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 16px; color: var(--text-secondary); }
+.legend i, .tip i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.card { background: var(--surface-1); border-radius: 10px; padding: 14px 14px 8px; margin-bottom: 16px; position: relative; }
+.card h2 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
 .card .unit { color: var(--text-muted); font-weight: 400; margin-left: 6px; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 6px; color: var(--text-secondary); font-size: 12px; }
-.legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-.legend input { margin: 0; }
-.legend i { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
 svg { display: block; width: 100%; height: auto; overflow: visible; }
-svg text { fill: var(--text-muted); font-size: 11px; }
-.tip {
-  position: absolute; pointer-events: none; background: var(--surface-0); color: var(--text-primary);
-  border: 1px solid var(--grid); border-radius: 8px; padding: 6px 9px; font-size: 12px;
-  white-space: nowrap; box-shadow: 0 2px 8px rgb(0 0 0 / .12); display: none; z-index: 2;
-}
-.tip b { font-weight: 600; }
-.tip .row { display: flex; align-items: center; gap: 6px; }
-.tip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-table { border-collapse: collapse; font-size: 13px; margin-top: 20px; font-variant-numeric: tabular-nums; width: 100%; }
-th, td { padding: 5px 10px; text-align: right; border-bottom: 1px solid var(--grid); }
-th:first-child, td:first-child { text-align: left; }
+svg text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg text.lbl { fill: var(--text-secondary); font-size: 12px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-0); color: var(--text-primary);
+  border: 1px solid var(--grid); border-radius: 8px; padding: 6px 10px; font-size: 12px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; display: none; z-index: 2; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tablewrap { overflow-x: auto; background: var(--surface-1); border-radius: 10px; padding: 8px 14px; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; width: 100%; }
+th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 th { color: var(--text-secondary); font-weight: 600; }
-.tablewrap { overflow-x: auto; }
+th:first-child, td:first-child { text-align: left; }
 .note { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>保存量の変化 ΔH′ の比較</h1>
-  <p class="sub">時間刻み dt を変えた NPT-MD（150 K）。ΔH′ = H′(t) − H′(最初のステップ)、1 原子あたり。</p>
-  <section class="card">
-    <h2>ΔH′<span class="unit">meV/原子 ・ 横軸 時間 (ps)</span></h2>
-    <div class="legend" id="legend"></div>
-    <div id="plot"></div>
-    <div class="tip" id="tip"></div>
-  </section>
-  <div class="tablewrap"><table id="table"></table></div>
-  <p class="note">ドリフト = ΔH′ を時間で直線フィットした傾き。ゆらぎ = その直線からの RMS。</p>
+<h1>シェル CG 外挿次数ごとの保存量</h1>
+<p class="sub" id="sub"></p>
+<div class="legend" id="legend"></div>
+<div id="charts"></div>
+<h2 style="font-size:15px;margin:24px 0 8px">まとめ</h2>
+<div class="tablewrap"><table id="summary"></table></div>
+<p class="note" id="note"></p>
 </main>
 <script>
 const DATA = __DATA__;
-const COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)"];
-const W = 760, H = 360, M = { l: 60, r: 16, t: 12, b: 30 };
-const YMAX = 0.4;  // y 軸の上限（meV/原子）
-const on = DATA.series.map(() => true);
+const COLORS = DATA.runs.map((_, i) => `var(--series-${i + 1})`);
+const t = DATA.t;
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+const fmt = v => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4);
+
+document.getElementById("sub").textContent =
+  `NHC・150 K・0.5 fs・cgtol 1e-6・${DATA.natoms} 原子・${t.length} ステップ（${t[t.length - 1].toFixed(2)} ps）。値は 1 原子あたり、初期値からの変化。`;
+document.getElementById("legend").innerHTML = DATA.runs.map((r, i) =>
+  `<span><i style="background:${COLORS[i]}"></i>${r.name}</span>`).join("");
 
 function niceTicks(lo, hi, n) {
-  if (lo === hi) { lo -= 1; hi += 1; }
-  const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const stepv = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
-  const t0 = Math.floor(lo / stepv) * stepv, ticks = [];
-  for (let t = t0; t <= hi + stepv * 1e-9; t += stepv) ticks.push(+t.toPrecision(12));
-  if (ticks[0] > lo) ticks.unshift(+(ticks[0] - stepv).toPrecision(12));
-  if (ticks[ticks.length - 1] < hi) ticks.push(+(ticks[ticks.length - 1] + stepv).toPrecision(12));
-  return { ticks, lo: ticks[0], hi: ticks[ticks.length - 1] };
+  const step0 = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-12; v += step) out.push(+v.toFixed(10));
+  return out;
 }
-function tickLabel(v, ticks) {
-  const d = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1;
-  const dec = Math.max(0, -Math.floor(Math.log10(d)) + (d / Math.pow(10, Math.floor(Math.log10(d))) % 1 ? 1 : 0));
-  return v.toFixed(Math.min(dec, 6));
-}
-const el = (tag, attrs) => {
-  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  return e;
-};
-const fmt = v => Math.abs(v) >= 10 ? v.toFixed(2) : v.toPrecision(3);
 
-const legend = document.getElementById("legend");
-DATA.series.forEach((s, i) => {
-  const lab = document.createElement("label");
-  lab.innerHTML = `<input type="checkbox" checked><i style="background:${COLORS[i]}"></i>${s.name}`;
-  lab.querySelector("input").addEventListener("change", e => { on[i] = e.target.checked; draw(); });
-  legend.appendChild(lab);
-});
+const W = 1000, H = 300, M = { l: 64, r: 70, t: 10, b: 30 };
+for (const ch of DATA.charts) {
+  const card = document.createElement("div"); card.className = "card";
+  card.innerHTML = `<h2>${ch.title}<span class="unit">meV/原子</span></h2>`;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": ch.title });
+  card.appendChild(svg);
+  const tip = document.createElement("div"); tip.className = "tip"; card.appendChild(tip);
+  document.getElementById("charts").appendChild(card);
 
-const plot = document.getElementById("plot"), tip = document.getElementById("tip"), card = plot.parentElement;
-function draw() {
-  plot.innerHTML = "";
-  const vis = DATA.series.map((s, i) => [s, i]).filter(([, i]) => on[i]);
-  const xmax = Math.max(...DATA.series.map(s => s.x[s.x.length - 1]));
-  const ally = vis.flatMap(([s]) => s.y).concat([0]);
-  // y 軸の上限は YMAX に固定（はみ出した線は切る）
-  const lo = Math.min(...ally), pad = (YMAX - lo) * 0.06;
-  const yt = niceTicks(lo - pad, YMAX, 6), xt = niceTicks(0, xmax, 8);
-  yt.ticks = yt.ticks.filter(t => t <= YMAX); yt.hi = YMAX;
-  const xs = v => M.l + v / xmax * (W - M.l - M.r);
-  const ys = v => M.t + (yt.hi - v) / (yt.hi - yt.lo) * (H - M.t - M.b);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "dt ごとの保存量の変化" });
-  for (const t of yt.ticks) {
-    svg.appendChild(el("line", { x1: M.l, x2: W - M.r, y1: ys(t), y2: ys(t), stroke: t === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
-    const tx = el("text", { x: M.l - 6, y: ys(t) + 4, "text-anchor": "end" });
-    tx.textContent = tickLabel(t, yt.ticks); svg.appendChild(tx);
+  let lo = Infinity, hi = -Infinity;
+  for (const r of DATA.runs) for (const v of r[ch.key]) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  lo = Math.min(lo, 0); hi = Math.max(hi, 0);
+  const pad = (hi - lo) * 0.06 || 1e-3; lo -= pad; hi += pad;
+  const xs = v => M.l + (v - t[0]) / (t[t.length - 1] - t[0]) * (W - M.l - M.r);
+  const ys = v => M.t + (hi - v) / (hi - lo) * (H - M.t - M.b);
+
+  for (const v of niceTicks(lo, hi, 5)) {
+    svg.appendChild(el("line", { x1: M.l, x2: W - M.r, y1: ys(v), y2: ys(v),
+      stroke: v === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+    const tx = el("text", { x: M.l - 8, y: ys(v) + 4, "text-anchor": "end" }); tx.textContent = v; svg.appendChild(tx);
   }
-  for (const t of xt.ticks) {
-    if (t < 0 || t > xmax) continue;
-    const tx = el("text", { x: xs(t), y: H - 10, "text-anchor": "middle" });
-    tx.textContent = tickLabel(t, xt.ticks); svg.appendChild(tx);
+  for (const v of niceTicks(t[0], t[t.length - 1], 6)) {
+    const tx = el("text", { x: xs(v), y: H - 8, "text-anchor": "middle" }); tx.textContent = v + " ps"; svg.appendChild(tx);
   }
-  svg.appendChild(el("line", { x1: M.l, x2: W - M.r, y1: H - M.b, y2: H - M.b, stroke: "var(--axis)", "stroke-width": 1 }));
-  const clip = el("clipPath", { id: "plotarea" });
-  clip.appendChild(el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b }));
-  svg.appendChild(clip);
-  for (const [s, i] of vis) {
-    const d = s.x.map((x, k) => `${k ? "L" : "M"}${xs(x).toFixed(2)},${ys(s.y[k]).toFixed(2)}`).join("");
-    svg.appendChild(el("path", { d, fill: "none", stroke: COLORS[i], "stroke-width": 1.6, "stroke-linejoin": "round",
-      "clip-path": "url(#plotarea)" }));
+  // 線（表示用に間引き：1 px あたり最大・最小を残す）
+  const ends = [];
+  DATA.runs.forEach((r, i) => {
+    const y = r[ch.key]; let d = "";
+    const bins = Math.floor(W - M.l - M.r), per = Math.max(1, Math.floor(y.length / bins));
+    for (let s = 0; s < y.length; s += per) {
+      let mn = s, mx = s;
+      for (let k = s; k < Math.min(s + per, y.length); k++) { if (y[k] < y[mn]) mn = k; if (y[k] > y[mx]) mx = k; }
+      for (const k of mn < mx ? [mn, mx] : [mx, mn]) d += (d ? "L" : "M") + xs(t[k]).toFixed(1) + "," + ys(y[k]).toFixed(1);
+    }
+    svg.appendChild(el("path", { d, fill: "none", stroke: COLORS[i], "stroke-width": 1.5, "stroke-linejoin": "round" }));
+    ends.push({ i, y: ys(y[y.length - 1]) });
+  });
+  // 右端の直接ラベル（重なりは縦にずらす）
+  ends.sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 14) ends[k].y = ends[k - 1].y + 14;
+  for (const e of ends) {
+    const tx = el("text", { x: W - M.r + 8, y: e.y + 4, class: "lbl" }); tx.textContent = DATA.runs[e.i].name; svg.appendChild(tx);
   }
+  // ホバー：縦線 + ツールチップ
   const cross = el("line", { y1: M.t, y2: H - M.b, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
   svg.appendChild(cross);
-  const dots = vis.map(([, i]) => { const c = el("circle", { r: 4, fill: COLORS[i], stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }); svg.appendChild(c); return c; });
-  const hit = el("rect", { x: M.l, y: 0, width: W - M.l - M.r, height: H, fill: "transparent" });
+  const dots = DATA.runs.map((_, i) => { const c = el("circle", { r: 4, fill: COLORS[i], stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }); svg.appendChild(c); return c; });
+  const hit = el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" });
   svg.appendChild(hit);
-  plot.appendChild(svg);
-  hit.addEventListener("pointermove", evt => {
-    const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    const tx = Math.max(0, Math.min(xmax, (p.x - M.l) / (W - M.l - M.r) * xmax));
-    const x = xs(tx);
-    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
-    let html = `<b>t = ${tx.toFixed(3)} ps</b>`;
-    vis.forEach(([s, i], j) => {
-      let k = s.x.findIndex(v => v >= tx); if (k < 0) k = s.x.length - 1;
-      dots[j].setAttribute("cx", xs(s.x[k])); dots[j].setAttribute("cy", ys(s.y[k])); dots[j].setAttribute("visibility", "visible");
-      html += `<div class="row"><i style="background:${COLORS[i]}"></i>${s.name}: ${fmt(s.y[k])} meV/原子</div>`;
-    });
-    tip.innerHTML = html; tip.style.display = "block";
-    const box = card.getBoundingClientRect(), sb = svg.getBoundingClientRect();
-    const px = sb.left - box.left + x / W * sb.width;
-    tip.style.left = `${px + 12 + tip.offsetWidth > box.width ? px - 12 - tip.offsetWidth : px + 12}px`;
-    tip.style.top = `${sb.top - box.top + 8}px`;
+  const hide = () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); dots.forEach(c => c.setAttribute("visibility", "hidden")); };
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("pointermove", ev => {
+    const rect = svg.getBoundingClientRect(), sx = (ev.clientX - rect.left) * W / rect.width;
+    const frac = (sx - M.l) / (W - M.l - M.r), k = Math.max(0, Math.min(t.length - 1, Math.round(frac * (t.length - 1))));
+    const x = xs(t[k]); cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+    DATA.runs.forEach((r, i) => { dots[i].setAttribute("cx", x); dots[i].setAttribute("cy", ys(r[ch.key][k])); dots[i].setAttribute("visibility", "visible"); });
+    tip.innerHTML = `<div style="color:var(--text-secondary)">t = ${t[k].toFixed(3)} ps（${k + 1} step）</div>` +
+      DATA.runs.map((r, i) => `<div class="row"><span><i style="background:${COLORS[i]}"></i>${r.name}</span><span>${r[ch.key][k].toFixed(5)}</span></div>`).join("");
+    tip.style.display = "block";
+    const cr = card.getBoundingClientRect(), px = ev.clientX - cr.left, py = ev.clientY - cr.top;
+    tip.style.left = (px + 14 + tip.offsetWidth > cr.width ? px - 14 - tip.offsetWidth : px + 14) + "px";
+    tip.style.top = Math.max(0, py - tip.offsetHeight - 10) + "px";
   });
-  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); dots.forEach(c => c.setAttribute("visibility", "hidden")); });
 }
-draw();
 
-document.getElementById("table").innerHTML =
-  "<thead><tr><th>dt</th><th>ステップ数</th><th>最終 ΔH′ (meV/原子)</th><th>最大 |ΔH′| (meV/原子)</th>" +
-  "<th>ドリフト (meV/原子/ps)</th><th>ゆらぎ RMS (meV/原子)</th></tr></thead><tbody>" +
-  DATA.stats.map((s, i) => `<tr><td><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[i]};margin-right:6px"></i>${s.name}</td>` +
-    `<td>${s.nsteps}</td><td>${fmt(s.final)}</td><td>${fmt(s.maxabs)}</td><td>${fmt(s.slope)}</td><td>${fmt(s.rms)}</td></tr>`).join("") +
-  "</tbody>";
+const last = a => a[a.length - 1];
+document.getElementById("summary").innerHTML =
+  "<thead><tr><th>外挿次数</th><th>平均 CG 回数</th><th>平均 cos</th><th>ΔH′ 終値</th><th>Δ(H′+W_d) 終値</th><th>W_d 終値</th>" +
+  "<th>ΔH′ 傾き</th><th>Δ(H′+W_d) 傾き</th></tr></thead><tbody>" +
+  DATA.runs.map((r, i) => `<tr><td><i style="display:inline-block;width:12px;height:3px;border-radius:2px;background:${COLORS[i]};vertical-align:middle;margin-right:6px"></i>${r.name}</td>` +
+    `<td>${r.ncg.toFixed(1)}</td><td>${r.cos >= 0 ? "+" : ""}${r.cos.toFixed(3)}</td>` +
+    `<td>${fmt(last(r.dh))}</td><td>${fmt(last(r.dhw))}</td><td>${fmt(last(r.wd))}</td>` +
+    `<td>${fmt(r.slope_dh)}</td><td>${fmt(r.slope_dhw)}</td></tr>`).join("") + "</tbody>";
+document.getElementById("note").textContent =
+  `終値の単位は meV/原子、傾きは meV/原子/ps（t ≥ ${DATA.fit_from} ps の最小二乗）。cos はシェル残差と Δs のなす角の余弦の全ステップ平均。`;
 </script>
 </body>
 </html>
