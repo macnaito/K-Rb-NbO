@@ -337,6 +337,9 @@ function npt!(atoms::Atoms, params)
         haskey(params, :polarization_umbrella) &&
             error("shell_dynamics = :xlbomd does not support the polarization " *
                   "umbrella (its bias has no analytic Hessian-vector product yet)")
+        haskey(params, :shell_extrap_order) &&
+            error(":shell_extrap_order is only read by shell_dynamics = :scf — " *
+                  "the :xlbomd path has its own predictor (drop it)")
     end
     # Run constants of the control context: the whole-system atom count
     # (rank-local under DD would silently rescale the thermostat masses per
@@ -374,7 +377,7 @@ function npt!(atoms::Atoms, params)
         total_mfrac_ref(atoms, params)
     end
 
-    extrap_order = get(params, :shell_extrap_order, 2)
+    extrap_order = Int(get(params, :shell_extrap_order, 2))
     shist_count = _init_shist!(atoms; order = extrap_order)
     xl = xl_init!(atoms, params)   # nothing unless shell_dynamics = :xlbomd
 

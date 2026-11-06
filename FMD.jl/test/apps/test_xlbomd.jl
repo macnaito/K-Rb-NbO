@@ -222,6 +222,15 @@ end
              input = "x.xyz", output_dir = "o", pme_meshsize = FMD.FPPREC(0.4),
              seed = 0, xl_kappa = 0.5))       # :scf must reject :xl_*
 
+        # :shell_extrap_order is :scf-only: a direct npt! call must refuse
+        # it rather than silently ignore it.
+        mktempdir() do dir
+            @test_throws ErrorException npt!(deepcopy_atoms(atoms),
+                (; p..., thermostat = :none, barostat = :none,
+                 shell_dynamics = :xlbomd, shell_extrap_order = 3,
+                 output_dir = dir))
+        end
+
         # k2 = 0 with a live quartic: the closed-form minimizer cannot
         # reach the purely quartic root, and s₁ = 0 would silently
         # disagree with the :scf path — refuse instead.
