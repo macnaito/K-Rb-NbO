@@ -420,6 +420,14 @@ function _check_control_params(p)
     if haskey(p, :shell_dynamics) && !(sd in (:scf, :xlbomd))
         push!(msgs, "shell_dynamics must be :scf or :xlbomd (got $(repr(sd)))")
     end
+    if haskey(p, :shell_extrap_order)
+        o = p[:shell_extrap_order]
+        o isa Integer && !(o isa Bool) && 0 <= o <= 4 ||
+            push!(msgs, "shell_extrap_order must be an Integer in 0:4 (got $(repr(o)))")
+        sd === :xlbomd &&
+            push!(msgs, ":shell_extrap_order is only read by shell_dynamics = :scf — " *
+                        "the :xlbomd path has its own predictor (drop it)")
+    end
     if sd === :xlbomd
         haskey(p, :polarization_umbrella) &&
             push!(msgs, "shell_dynamics = :xlbomd does not support " *
@@ -508,7 +516,9 @@ SPECS[:NPTMD] = ParamSpec(
      # :xlbomd only — all conditionally checked in _check_control_params.
      # Deliberately not in default_params: adding keys there would change
      # the NamedTuple shape the precompile workload mirrors.
-     :shell_dynamics, :xl_kappa, :xl_warmup, :xl_max_deviation,
+     # :shell_extrap_order (default 2, read in npt!) — order of the :scf
+     # shell-CG predictor; same NamedTuple-shape reason.
+     :shell_dynamics, :shell_extrap_order, :xl_kappa, :xl_warmup, :xl_max_deviation,
      :xl_kernel, :xl_kernel_order, :xl_kernel_spectrum],
     Dict{Symbol,Vector{Symbol}}(),
     Function[
