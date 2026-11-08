@@ -38,6 +38,8 @@ def quantities(rows, n, ncell):
         # shell_rms 列の無い古いログ・NaN の入る XL-BOMD では None
         rms=([r[19] * HA_PER_BOHR_TO_MEV_PER_A for r in rows]
              if all(r[19] is not None and math.isfinite(r[19]) for r in rows) else None),
+        # 1 ステップの計算時間（ms）．wall 列の無い古いログでは None
+        wall=([r[20] * 1000 for r in rows] if all(r[20] is not None for r in rows) else None),
     )
 
 
@@ -46,7 +48,7 @@ def main():
     ap.add_argument("dirs", nargs="+", type=Path, help="比べる出力フォルダ（2〜3 個）")
     ap.add_argument("-n", "--nsteps", type=int, help="先頭から描くステップ数（省略時は一番短いものに合わせる）")
     ap.add_argument("--labels", help="凡例の名前をカンマ区切りで（例: 'cgtol=1e-6,cgtol=1e-5'）")
-    ap.add_argument("--only", help="描くグラフをカンマ区切りで（temp,a,b,c,vol,px,py,pz,cons,ncg,ncgavg,rms）")
+    ap.add_argument("--only", help="描くグラフをカンマ区切りで（temp,a,b,c,vol,px,py,pz,cons,ncg,ncgavg,rms,wall,wallavg）")
     ap.add_argument("--window", type=int, default=100, help="ncgavg の移動平均の幅（ステップ，既定 100）")
     ap.add_argument("--fit-from", type=int, default=1000,
                     help="ΔH′ の傾きの直線フィットで除外する先頭ステップ数（既定 1000）")
@@ -81,6 +83,11 @@ def main():
         for v in qi["ncg"]:
             cs.append(cs[-1] + v)
         qi["ncgavg"] = [(cs[k + 1] - cs[max(0, k + 1 - w)]) / min(k + 1, w) for k in range(len(qi["ncg"]))]
+        if qi["wall"] is not None:
+            cs = [0]
+            for v in qi["wall"]:
+                cs.append(cs[-1] + v)
+            qi["wallavg"] = [(cs[k + 1] - cs[max(0, k + 1 - w)]) / min(k + 1, w) for k in range(len(qi["wall"]))]
 
     def two(key):
         return [dict(name=nm, y=qi[key]) for nm, qi in zip(names, q)]
@@ -98,6 +105,13 @@ def main():
         dict(id="ncg", title="シェル緩和の反復回数", unit="回", series=two("ncg"), integer=True),
         dict(id="ncgavg", title=f"シェル緩和の反復回数（{w} ステップ移動平均）", unit="回", series=two("ncgavg")),
     ]
+    # 計算時間は全部のログに wall 列があるときだけ描く
+    if all(qi["wall"] is not None for qi in q):
+        charts.append(dict(id="wall", title="1 ステップの計算時間", unit="ms", series=two("wall")))
+        charts.append(dict(id="wallavg", title=f"1 ステップの計算時間（{w} ステップ移動平均）", unit="ms",
+                           series=two("wallavg")))
+    elif any(qi["wall"] is not None for qi in q):
+        print("note: wall 列の無いログがあるので計算時間のグラフは省略")
     # 残差の rms は全部のログに shell_rms 列がある（かつ NaN が無い）ときだけ描く
     if all(qi["rms"] is not None for qi in q):
         charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å", series=two("rms")))

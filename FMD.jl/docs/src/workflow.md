@@ -137,9 +137,11 @@ The driver is described in [`FMD.Apps.npt!`](@ref). Output goes to
   lattice (9 cols), `dipole` (3 cols), gauge-fixed `dipole_phys`
   (3 cols), `volume`, `conserved` (diagnostic H′, Issue #136),
   `shell_rms` (rms shell-force residual left by the step's CG, Ha/Bohr;
-  NaN on an XL-BOMD shadow step), `ncg` (shell-relaxation force
+  NaN on an XL-BOMD shadow step), `wall` (wall-clock seconds of the
+  step on the root rank, file output excluded; the first steps include
+  JIT compilation), `ncg` (shell-relaxation force
   evaluations, a dimensionless count, Issue #144). Units: K, Å, Å³,
-  Hartree, Ha/Bohr.
+  Hartree, Ha/Bohr, s.
 - `step_<n>.xyz` — extxyz snapshots every `params[:output_interval]`
   steps.
 - `Bias.log` (optional) — populated when

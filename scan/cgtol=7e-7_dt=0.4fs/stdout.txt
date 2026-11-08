@@ -1,0 +1,4 @@
+[ Info: npt!: Ewald α = 0.1629 (auto), PME grid (63, 63, 63); estimated RMS force error 0.000321 Ha/Bohr (real 0.000132, reciprocal 0.000292) — homogeneous-system estimate: site RMS, safe-side on thermal crystals, blind to symmetric-lattice cancellation (Issue #211)
+[ Info: potential = core-shell + ACEParam + NLH baseline
+[ Info: Building neighbor list...
+[ Info: Done
