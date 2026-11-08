@@ -514,9 +514,14 @@ force-evaluation count (`ncg`, the [`calculate!`](@ref) return value).
 (Issue #149). Both leave the same outputs, so the MLIP / NLH call sites
 below are shared. Deliberately a KEYWORD: a forgotten positional argument
 would silently run the SCF path — different physics, no error.
+
+`atoms.info[:shell_residual_rms]` is reset to NaN here and set only by a
+CG relaxation run in this call, so an XL shadow step (no CG) reports NaN
+rather than the residual of an earlier warmup or fallback step.
 """
 function evaluate_forces!(atoms::Atoms, fs::ForceStack, params; xl = nothing)::Int
     clear!(atoms)
+    atoms.info[:shell_residual_rms] = [FPPREC(NaN)]
     ncg = xl === nothing ?
         calculate!(CoreShell(), atoms, fs.nlist, fs.pmeinfo, params) :
         xl_step!(atoms, fs.nlist, fs.pmeinfo, params, xl)

@@ -69,13 +69,23 @@ import MPI
 
         # Driver output: one log line per step, snapshots at the interval.
         @test countlines(joinpath(dir, "log.txt")) == 4
-        # 19 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
-        # volume | conserved (Issue #136) | ncg (Issue #144);
+        # 20 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
+        # volume | conserved (Issue #136) | shell_rms | ncg (Issue #144);
         # conserved finite, ncg a non-negative count.
         cols = split(first(eachline(joinpath(dir, "log.txt"))))
-        @test length(cols) == 19
+        @test length(cols) == 20
         @test isfinite(parse(Float64, cols[18]))
         @test parse(Int, cols[end]) >= 0
+        # shell_rms: every step ran the CG, so finite on every line; and
+        # rms ≤ max < cgtol on every step that exited by convergence
+        # (the stopping test bounds the maximum component, and the rms of
+        # the same components cannot exceed it).
+        for l in eachline(joinpath(dir, "log.txt"))
+            c = split(l)
+            rms = parse(Float64, c[19])
+            @test isfinite(rms) && rms >= 0
+            parse(Int, c[20]) < params[:cgmaxiter] && @test rms < params[:cgtol]
+        end
         @test isfile(joinpath(dir, "step_2.xyz"))
         @test isfile(joinpath(dir, "step_4.xyz"))
         @test !isfile(joinpath(dir, "step_3.xyz"))
@@ -210,8 +220,11 @@ end
         lines = readlines(joinpath(dir, "log.txt"))
         @test length(lines) == 4
         cols = split(lines[end])
-        @test length(cols) == 19
+        @test length(cols) == 20
         @test isfinite(parse(Float64, cols[18]))
+        # shell_rms of the final step is that of the returned frame's
+        # last CG exit, up to the %15.8e print precision.
+        @test parse(Float64, cols[19]) ≈ out.info[:shell_residual_rms][1] rtol = 1e-7
         # The log is sampled at the end of the step (after the closing
         # half-kick), so the last temperature is that of the returned
         # velocities, up to the %15.8e print precision.

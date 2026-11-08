@@ -161,6 +161,13 @@ end
                 @test length(ncg) == 8
                 @test all(>(0), ncg[1:3])       # warmup relaxes
                 @test all(==(0), ncg[4:end])    # then pure shadow steps
+                # shell_rms (column 19) is a residual only where a CG ran:
+                # finite on the warmup steps, NaN on the shadow steps —
+                # never the stale value of the last warmup.
+                rms = [parse(Float64, split(l)[19])
+                       for l in eachline(joinpath(dir, "log.txt"))]
+                @test all(isfinite, rms[1:3])
+                @test all(isnan, rms[4:end])
                 # Shadow dynamics conserves its own invariant at least as
                 # well as the tight SCF path conserves the physical one
                 # (relative comparison — the absolute scale is the

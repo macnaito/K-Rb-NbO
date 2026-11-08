@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-from plot_log import HARTREE_EV, TEMPLATE, natoms, ncell_from_natoms, read_log
+from plot_log import HA_PER_BOHR_TO_MEV_PER_A, HARTREE_EV, TEMPLATE, natoms, ncell_from_natoms, read_log
 
 MAXPTS = 2000
 
@@ -35,6 +35,9 @@ def quantities(rows, n, ncell):
         pz=[r[15] / r[16] * pol for r in rows],
         dh=[(r[17] - h0) * HARTREE_EV * 1000 / n for r in rows],
         ncg=[r[18] for r in rows],
+        # shell_rms 列の無い古いログ・NaN の入る XL-BOMD では None
+        rms=([r[19] * HA_PER_BOHR_TO_MEV_PER_A for r in rows]
+             if all(r[19] is not None and math.isfinite(r[19]) for r in rows) else None),
     )
 
 
@@ -43,7 +46,7 @@ def main():
     ap.add_argument("dirs", nargs="+", type=Path, help="比べる出力フォルダ（2〜3 個）")
     ap.add_argument("-n", "--nsteps", type=int, help="先頭から描くステップ数（省略時は一番短いものに合わせる）")
     ap.add_argument("--labels", help="凡例の名前をカンマ区切りで（例: 'cgtol=1e-6,cgtol=1e-5'）")
-    ap.add_argument("--only", help="描くグラフをカンマ区切りで（temp,a,b,c,vol,px,py,pz,cons,ncg,ncgavg）")
+    ap.add_argument("--only", help="描くグラフをカンマ区切りで（temp,a,b,c,vol,px,py,pz,cons,ncg,ncgavg,rms）")
     ap.add_argument("--window", type=int, default=100, help="ncgavg の移動平均の幅（ステップ，既定 100）")
     ap.add_argument("--fit-from", type=int, default=1000,
                     help="ΔH′ の傾きの直線フィットで除外する先頭ステップ数（既定 1000）")
@@ -95,6 +98,11 @@ def main():
         dict(id="ncg", title="シェル緩和の反復回数", unit="回", series=two("ncg"), integer=True),
         dict(id="ncgavg", title=f"シェル緩和の反復回数（{w} ステップ移動平均）", unit="回", series=two("ncgavg")),
     ]
+    # 残差の rms は全部のログに shell_rms 列がある（かつ NaN が無い）ときだけ描く
+    if all(qi["rms"] is not None for qi in q):
+        charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å", series=two("rms")))
+    elif any(qi["rms"] is not None for qi in q):
+        print("note: shell_rms 列の無い（または NaN を含む）ログがあるので残差のグラフは省略")
     # ΔH′ の傾き: fit_from ステップ以降を最小二乗で直線フィット（傾きは meV/原子/ステップ）
     if not 0 <= args.fit_from < nsteps - 1:
         sys.exit(f"--fit-from は 0〜{nsteps - 2} の範囲で指定してください")
