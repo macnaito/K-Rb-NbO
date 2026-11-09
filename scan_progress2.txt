@@ -1,0 +1,41 @@
+2026-11-08 15:28:23 start scan/cgtol=1e-6_dt=0.6fs (5000 steps)
+2026-11-08 16:21:37 done  scan/cgtol=1e-6_dt=0.6fs
+2026-11-08 16:21:37 start scan/cgtol=1e-6_dt=0.7fs (4286 steps)
+2026-11-08 17:08:50 done  scan/cgtol=1e-6_dt=0.7fs
+2026-11-08 17:08:50 start scan/cgtol=1e-6_dt=0.8fs (3750 steps)
+2026-11-08 17:50:24 done  scan/cgtol=1e-6_dt=0.8fs
+2026-11-08 17:50:24 start scan/cgtol=1e-6_dt=0.9fs (3334 steps)
+2026-11-08 18:28:07 done  scan/cgtol=1e-6_dt=0.9fs
+2026-11-08 18:28:07 start scan/cgtol=1e-6_dt=1.0fs (3000 steps)
+2026-11-08 19:02:54 done  scan/cgtol=1e-6_dt=1.0fs
+2026-11-08 19:02:54 start scan/cgtol=7e-7_dt=0.6fs (5000 steps)
+2026-11-08 19:57:31 done  scan/cgtol=7e-7_dt=0.6fs
+2026-11-08 19:57:31 start scan/cgtol=7e-7_dt=0.7fs (4286 steps)
+2026-11-08 20:44:31 done  scan/cgtol=7e-7_dt=0.7fs
+2026-11-08 20:44:31 start scan/cgtol=7e-7_dt=0.8fs (3750 steps)
+2026-11-08 21:26:21 done  scan/cgtol=7e-7_dt=0.8fs
+2026-11-08 21:26:21 start scan/cgtol=7e-7_dt=0.9fs (3334 steps)
+2026-11-08 22:04:36 done  scan/cgtol=7e-7_dt=0.9fs
+2026-11-08 22:04:36 start scan/cgtol=7e-7_dt=1.0fs (3000 steps)
+2026-11-08 22:40:36 done  scan/cgtol=7e-7_dt=1.0fs
+2026-11-08 22:40:36 start scan/cgtol=4e-7_dt=0.6fs (5000 steps)
+2026-11-08 23:35:19 done  scan/cgtol=4e-7_dt=0.6fs
+2026-11-08 23:35:19 start scan/cgtol=4e-7_dt=0.7fs (4286 steps)
+2026-11-09 00:23:29 done  scan/cgtol=4e-7_dt=0.7fs
+2026-11-09 00:23:29 start scan/cgtol=4e-7_dt=0.8fs (3750 steps)
+2026-11-09 01:06:57 done  scan/cgtol=4e-7_dt=0.8fs
+2026-11-09 01:06:58 start scan/cgtol=4e-7_dt=0.9fs (3334 steps)
+2026-11-09 01:47:16 done  scan/cgtol=4e-7_dt=0.9fs
+2026-11-09 01:47:16 start scan/cgtol=4e-7_dt=1.0fs (3000 steps)
+2026-11-09 02:25:08 done  scan/cgtol=4e-7_dt=1.0fs
+2026-11-09 02:25:08 start scan/cgtol=1e-7_dt=0.6fs (5000 steps)
+2026-11-09 03:28:13 done  scan/cgtol=1e-7_dt=0.6fs
+2026-11-09 03:28:13 start scan/cgtol=1e-7_dt=0.7fs (4286 steps)
+2026-11-09 04:24:17 done  scan/cgtol=1e-7_dt=0.7fs
+2026-11-09 04:24:17 start scan/cgtol=1e-7_dt=0.8fs (3750 steps)
+2026-11-09 05:15:09 done  scan/cgtol=1e-7_dt=0.8fs
+2026-11-09 05:15:10 start scan/cgtol=1e-7_dt=0.9fs (3334 steps)
+2026-11-09 06:02:04 done  scan/cgtol=1e-7_dt=0.9fs
+2026-11-09 06:02:04 start scan/cgtol=1e-7_dt=1.0fs (3000 steps)
+2026-11-09 06:45:59 done  scan/cgtol=1e-7_dt=1.0fs
+2026-11-09 06:45:59 all done

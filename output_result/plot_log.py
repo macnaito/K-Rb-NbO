@@ -3,7 +3,7 @@
 
 使い方（KNO フォルダで）:
     python3 plot_log.py                 # out/log.txt → out/log_plot.html
-    python3 plot_log.py out2/log.txt    # 別の出力フォルダ
+    python3 plot_log.py out2/log.txt    # 別の出力フォルダ (out2 だけでもよい)
 
 log.txt の列（FMD.jl/src/Apps/NPT.jl が毎ステップ 1 行書く）:
     temp(K) | lattice 9 成分(Å, 列優先) | dipole 3 (e·Å) | dipole_phys 3 (e·Å)
@@ -61,6 +61,8 @@ def ncell_from_natoms(n):
 
 def main():
     log = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("out/log.txt")
+    if log.is_dir():  # 出力フォルダを渡されたら，その中の log.txt を読む
+        log = log / "log.txt"
     rows = read_log(log)
     # 原子数は出力スナップショットから取る（保存量を 1 原子あたりにするため）
     snaps = sorted(log.parent.glob("step_*.xyz"))

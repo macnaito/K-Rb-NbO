@@ -1,7 +1,7 @@
 # dt × cgtol スキャンの 1 パターン分 (メモ calculation cost.rtf)．
 #   julia -t auto --project=FMD.jl md_scan.jl <dt[fs]> <cgtol>
 #   例: julia -t auto --project=FMD.jl md_scan.jl 0.5 1e-6
-# 条件: 8×8×8 (2,560 原子)，150 K，0 GPa，CSVR + MTTK，shell_extrap_order = 3，3 ps．
+# 条件: 8×8×8 (2,560 原子)，150 K，0 GPa，CSVR + MTTK，shell_extrap_order = 3，3 ps (dt = 0.2〜1.0 fs)．
 # 出力: scan/cgtol=<cgtol>_dt=<dt>fs/  (log.txt の wall 列 = 1 ステップの計算時間)
 using FMD
 using FMD: UNITS
@@ -12,8 +12,8 @@ cgtol = parse(Float64, ARGS[2])
 dt_fs > 0 && cgtol > 0 || error("dt と cgtol は正の値 (got dt = $dt_fs, cgtol = $cgtol)")
 
 total_fs = 3000.0                          # 3 ps
-nsteps = round(Int, total_fs / dt_fs)
-nsteps * dt_fs ≈ total_fs || error("3 ps が dt = $dt_fs fs で割り切れない")
+# 割り切れない dt (0.7, 0.9 fs) は切り上げて 3 ps 以上にする (メモ: 4286, 3334 step)
+nsteps = ceil(Int, total_fs / dt_fs - 1e-9)
 
 fs = 1.0/UNITS[:fs]
 pot = FMD.loadpotential("./ACEP.jld2")
