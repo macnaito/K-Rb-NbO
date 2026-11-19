@@ -274,7 +274,7 @@ end
         ref_x = npt_dd_serial_ref(:cpu; xl = true)
         verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/xlbomd"),
                           joinpath(cpu_bundles[2].outdir, bundle_slug("npt_dd/xlbomd")),
-                          ref_x, 2, :cpu)
+                          ref_x, 2, :cpu; xl = true)
         # Chebyshev kernel (Issue #152): the preconditioned direction adds
         # order-1 further HVPs per step. Their count is state-independent,
         # so every rank — empty ones included — makes the same collective
@@ -284,7 +284,7 @@ end
         verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/xlbomd_cheb"),
                           joinpath(cpu_bundles[2].outdir,
                                    bundle_slug("npt_dd/xlbomd_cheb")),
-                          ref_xc, 2, :cpu)
+                          ref_xc, 2, :cpu; xl = true)
         # Shadow virial under a barostat (Issue #151): the correction is
         # an owned per-atom sum plus a REPLICATED reciprocal remainder, so
         # a wrong reduction regime scales the cell-driving stress by the
@@ -294,7 +294,7 @@ end
         verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/xlbomd_baro"),
                           joinpath(cpu_bundles[2].outdir,
                                    bundle_slug("npt_dd/xlbomd_baro")),
-                          ref_xb, 2, :cpu)
+                          ref_xb, 2, :cpu; xl = true)
         # NLH baseline (Issue #124): a gather kernel on a list derived from
         # the rc parent, whose per-atom energy/virial are owned partial sums.
         # A ghost-row or reduction-regime slip shows up as a trajectory
@@ -321,7 +321,7 @@ end
         verify_npt_normal(load_check(cpu_bundles[2], "npt_dd/xlbomd_surface"),
                           joinpath(cpu_bundles[2].outdir,
                                    bundle_slug("npt_dd/xlbomd_surface")),
-                          ref_xs, 2, :cpu)
+                          ref_xs, 2, :cpu; xl = true)
     end
 
     # NaCl-8 at P = 6: empty ranks ride the whole driver (distribute,
