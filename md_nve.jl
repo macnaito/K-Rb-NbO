@@ -11,20 +11,20 @@ fs = 1.0/UNITS[:fs]
 
 params = (;
      pot...,
-     output_dir = "out_nve_1fs",
+     output_dir = "out_nve_0",
      input = "output_result/out-150K_0Gpa_relax/step_39000.xyz",
      backend = :cpu,
      pme_meshsize = 1.0,
      efield = [0.0, 0.0, 0.0],
      cgtol = 1e-6,
      cgmaxiter = 200,
-     shell_extrap_order = 2,
+     shell_extrap_order = 0,     # shell CG 初期値の外挿次数 k ∈ 0:4 (直近 k+1 点; 2 = 従来の3点外挿)
      skin = 0.2,
-     timestep = 1.0fs,
+     timestep = 0.5fs,
      thermostat = :none,          # NVE: 熱浴なし
      barostat = :none,            # NVE: セル固定
      output_interval = 1000,
-     nsteps = 20_000,             # 10 ps
+     nsteps = 8000,             # 4 ps
      initial_temperature = 0.0,   # 0 = 入力の速度をそのまま使う (乱数で引き直さない)
      target_temperature = 150.0,  # NVE では使われない (必須キーなので残す)
 )

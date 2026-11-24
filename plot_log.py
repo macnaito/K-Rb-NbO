@@ -7,10 +7,13 @@
 
 log.txt の列（FMD.jl/src/Apps/NPT.jl が毎ステップ 1 行書く）:
     temp(K) | lattice 9 成分(Å, 列優先) | dipole 3 (e·Å) | dipole_phys 3 (e·Å)
-    | volume(Å³) | conserved(Hartree) | shell_rms(Ha/Bohr) | wall(s) | ncg
+    | volume(Å³) | conserved(Hartree) | shell_rms(Ha/Bohr) | wall(s)
+    | conserved+W_d(Hartree) | shell_cos | ncg
 shell_rms は 2026-10 に追加された列（シェル緩和 CG の停止時の残差の rms），
-wall は 2026-11 に追加された列（1 ステップの計算時間，ファイル出力は含まない）．
-それより前の 19・20 列のログもそのまま読める（無い列は None になる）．
+wall は 2026-11 に追加された列（1 ステップの計算時間，ファイル出力は含まない），
+conserved+W_d と shell_cos は 2026-11 に追加された列（シェル残差がした仕事を足した保存量と，
+残差とシェルの動きの向きのなす角の cos）．
+それより前の 19・20・21 列のログもそのまま読める（無い列は None になる）．
 """
 import json
 import math
@@ -24,7 +27,7 @@ ATOMS_PER_CELL = 5  # ペロブスカイト ABO3 の単位格子あたりの原�
 
 
 def read_log(path):
-    """1 行 = [18 個の float..., ncg(int), shell_rms(float か None), wall(float か None)]．
+    """1 行 = [18 個の float..., ncg(int), shell_rms, wall, conserved+W_d, shell_cos]（無い列は None）．
 
     列の位置は r[0]〜r[17] と r[18] = ncg のまま変えない（古いスクリプトと互換）．
     """
@@ -33,11 +36,14 @@ def read_log(path):
         for line in f:
             v = line.split()
             if len(v) == 19:      # shell_rms 列が入る前のログ
-                rows.append([float(x) for x in v[:18]] + [int(v[18]), None, None])
+                rows.append([float(x) for x in v[:18]] + [int(v[18]), None, None, None, None])
             elif len(v) == 20:    # ... | conserved | shell_rms | ncg
-                rows.append([float(x) for x in v[:18]] + [int(v[19]), float(v[18]), None])
+                rows.append([float(x) for x in v[:18]] + [int(v[19]), float(v[18]), None, None, None])
             elif len(v) == 21:    # ... | conserved | shell_rms | wall | ncg
-                rows.append([float(x) for x in v[:18]] + [int(v[20]), float(v[18]), float(v[19])])
+                rows.append([float(x) for x in v[:18]] + [int(v[20]), float(v[18]), float(v[19]), None, None])
+            elif len(v) == 23:    # ... | shell_rms | wall | conserved+W_d | shell_cos | ncg
+                rows.append([float(x) for x in v[:18]] + [int(v[22]), float(v[18]), float(v[19]),
+                                                          float(v[20]), float(v[21])])
     if not rows:
         sys.exit(f"{path}: データ行がありません")
     return rows
@@ -104,6 +110,15 @@ def main():
         mean_ms = sum(wall[10:]) / len(wall[10:]) * 1000
         print(f"wall: 1 ステップ平均 {mean_ms:.1f} ms（先頭 10 ステップを除く），合計 {sum(wall):.1f} s")
 
+    # シェル残差の仕事 W_d を足した保存量と，残差の向きの cos（XL-BOMD では NaN）
+    has_wd = all(r[21] is not None and math.isfinite(r[21]) for r in rows)
+    dhwd = [(r[21] - rows[0][21]) * scale for r in rows] if has_wd else None
+    cos = [r[22] for r in rows]
+    has_cos = all(x is not None and math.isfinite(x) for x in cos)
+    if has_cos and len(cos) > 10:
+        tail = cos[len(cos) // 10:]
+        print(f"shell_cos: 平均 {sum(tail) / len(tail):+.4f}（先頭 10% を除く）")
+
     charts = [
         dict(id="temp", title="温度", unit="K", series=[dict(name="温度", y=temp)],
              ref=dict(y=None, label="")),
@@ -114,7 +129,8 @@ def main():
              series=[dict(name="Px", y=px), dict(name="Py", y=py), dict(name="Pz", y=pz)],
              ref=dict(y=0, label="0")),
         dict(id="cons", title="保存量の変化 ΔH′",
-             unit="meV/原子" if n else "eV", series=[dict(name="ΔH′", y=dh)],
+             unit="meV/原子" if n else "eV",
+             series=[dict(name="ΔH′", y=dh)] + ([dict(name="ΔH′ + W_d", y=dhwd)] if has_wd else []),
              ref=dict(y=0, label="0")),
         dict(id="ncg", title="シェル緩和の反復回数", unit="回",
              series=[dict(name="ncg", y=ncg)], integer=True),
@@ -122,6 +138,9 @@ def main():
     if has_wall:
         charts.append(dict(id="wall", title="1 ステップの計算時間", unit="ms",
                            series=[dict(name="wall", y=[x * 1000 for x in wall])]))
+    if has_cos:
+        charts.append(dict(id="cos", title="シェル残差とシェルの動きのなす角 cos θ", unit="",
+                           series=[dict(name="cos θ", y=cos)], ref=dict(y=0, label="0")))
     if has_rms:
         charts.append(dict(id="rms", title="シェル緩和の残差 rms", unit="meV/Å",
                            series=[dict(name="rms", y=[x * HA_PER_BOHR_TO_MEV_PER_A for x in rms])]))

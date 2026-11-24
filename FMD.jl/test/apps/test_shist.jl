@@ -6,7 +6,8 @@
 # predictor values, and the follow-the-resort behaviour are pinned down here.
 using Test
 using LinearAlgebra
-using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
+using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!,
+                _init_shell_work!, _shell_work_step!
 
 @testset "shist helpers (npt! extrapolation history)" begin
     N = 4
@@ -105,5 +106,55 @@ using FMD.Apps: _init_shist!, _extrapolate_shelldisp!, _rotate_shist!
         @test a1.arrays[:shelldisp] == a2.arrays[:shelldisp]
         @test a1.arrays[:shelldisp] == 3 .* a1.arrays[:shist1] .- 3 .* a1.arrays[:shist2] .+ a1.arrays[:shist3]
         @test_throws ErrorException _init_shist!(make_atoms(lat, frac, ones(Int, N)); order = 5)
+    end
+
+    @testset "shell-residual work ΔW and direction cosθ (_shell_work_step!)" begin
+        # Quadratic shell energy E(s) = ½ k |s − s★|², residual F = −k (s − s★).
+        # F is linear in s, so the trapezoid ΔW = ½(F₀ + F₁)·(s₁ − s₀) is the
+        # exact line integral: ΔW == −(E₁ − E₀), and conserved + W_d sees no
+        # leak from the shell update.
+        atoms = make_atoms(lat, frac, ones(Int, N))
+        dom = FMD.Cores.domain(atoms)
+        a = atoms.arrays
+        k = FMD.FPPREC(0.7)
+        sstar = FMD.FPPREC.(0.01 .* sin.(reshape(1:3N, N, 3)))
+        E(s) = k / 2 * sum(abs2, s .- sstar)
+        F(s) = -k .* (s .- sstar)
+        s0 = FMD.FPPREC.(0.02 .* cos.(reshape(1:3N, N, 3)))
+        s1 = s0 .+ FMD.FPPREC.(0.005 .* reshape(1:3N, N, 3) ./ 3N)
+        a[:shelldisp] .= s0
+        a[:shellforces] = F(s0)
+        _init_shist!(atoms)
+        _init_shell_work!(atoms)
+        @test a[:shres_prev] == F(s0)
+        @test a[:shres_prev] !== a[:shellforces]       # a copy, not an alias
+
+        a[:shelldisp] .= s1
+        a[:shellforces] .= F(s1)
+        dW, c = _shell_work_step!(atoms, dom)
+        @test dW ≈ -(E(s1) - E(s0)) rtol = 1e-10
+        fbar = (F(s0) .+ F(s1)) ./ 2
+        ds = s1 .- s0
+        @test c ≈ sum(fbar .* ds) / (norm(fbar) * norm(ds)) rtol = 1e-10
+        @test -1 <= c <= 1
+        # The previous residual has advanced to the current one.
+        @test a[:shres_prev] == F(s1)
+
+        # Residual exactly along / against the shell motion: cosθ = ±1.
+        _rotate_shist!(atoms, 0)
+        d = FMD.FPPREC.(reshape(1:3N, N, 3)) .* 1e-3
+        a[:shres_prev] .= d; a[:shellforces] .= d
+        a[:shelldisp] .= a[:shist1] .+ d
+        @test _shell_work_step!(atoms, dom)[2] ≈ 1 rtol = 1e-10
+        _rotate_shist!(atoms, 0)
+        a[:shres_prev] .= -d; a[:shellforces] .= -d
+        a[:shelldisp] .= a[:shist1] .+ d
+        @test _shell_work_step!(atoms, dom)[2] ≈ -1 rtol = 1e-10
+
+        # No shell motion: ΔW = 0 and cosθ undefined (NaN), never a fake 0.
+        _rotate_shist!(atoms, 0)
+        dW0, c0 = _shell_work_step!(atoms, dom)
+        @test dW0 == 0
+        @test isnan(c0)
     end
 end

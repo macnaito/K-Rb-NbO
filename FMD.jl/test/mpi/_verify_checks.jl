@@ -551,7 +551,7 @@ function verify_npt_normal(d, dd_dir, ref, P, backend; xl::Bool = false)
     logref = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(ref.dir, "log.txt"))]
     logdd = [parse.(FMD.FPPREC, split(l)) for l in eachline(joinpath(dd_dir, "log.txt"))]
     @test length(logdd) == length(logref) == 6
-    @test all(length(logdd[i]) == length(logref[i]) == 21 for i in 1:6)
+    @test all(length(logdd[i]) == length(logref[i]) == 23 for i in 1:6)
     reldiff(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), 1e-8))
     @test reldiff(logdd[1][1:18], logref[1][1:18]) < 1e-6
     @test maximum(reldiff(logdd[i][1:18], logref[i][1:18]) for i in 1:6) < 1e-3
@@ -563,7 +563,7 @@ function verify_npt_normal(d, dd_dir, ref, P, backend; xl::Bool = false)
         @test all(isfinite(logdd[i][19]) for i in 1:6)
     end
     @test all(isfinite(logdd[i][20]) && logdd[i][20] > 0 for i in 1:6)
-    @test maximum(abs(logdd[i][21] - logref[i][21]) for i in 1:6) <= 2
+    @test maximum(abs(logdd[i][23] - logref[i][23]) for i in 1:6) <= 2
     # The rebuild (→ migrate; on cuda a host round trip) path actually
     # fired: the initial build plus at least one mid-run rebuild, counted
     # by the child's logger (pre-#113: a stdout grep on the per-check

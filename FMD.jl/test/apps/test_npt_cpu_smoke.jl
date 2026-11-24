@@ -69,11 +69,12 @@ import MPI
 
         # Driver output: one log line per step, snapshots at the interval.
         @test countlines(joinpath(dir, "log.txt")) == 4
-        # 21 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
-        # volume | conserved (Issue #136) | shell_rms | wall | ncg (Issue #144);
+        # 23 columns: temp | lattice(9) | dipole(3) | dipole_phys(3) |
+        # volume | conserved (Issue #136) | shell_rms | wall |
+        # conserved+W_d | shell_cos | ncg (Issue #144);
         # conserved finite, ncg a non-negative count.
         cols = split(first(eachline(joinpath(dir, "log.txt"))))
-        @test length(cols) == 21
+        @test length(cols) == 23
         @test isfinite(parse(Float64, cols[18]))
         @test parse(Int, cols[end]) >= 0
         # shell_rms: every step ran the CG, so finite on every line; and
@@ -84,10 +85,18 @@ import MPI
             c = split(l)
             rms = parse(Float64, c[19])
             @test isfinite(rms) && rms >= 0
-            parse(Int, c[21]) < params[:cgmaxiter] && @test rms < params[:cgtol]
+            parse(Int, c[23]) < params[:cgmaxiter] && @test rms < params[:cgtol]
             # wall: per-step wall-clock seconds, a positive finite time.
             wall = parse(Float64, c[20])
             @test isfinite(wall) && wall > 0
+            # conserved + W_d: finite. shell_cos: a cosine whenever the
+            # shells moved this step; NaN (undefined, never a fake 0) only
+            # when they did not — e.g. step 1 with ncg = 0, where the
+            # predictor is still warming up and the CG exits at once.
+            @test isfinite(parse(Float64, c[21]))
+            cs = parse(Float64, c[22])
+            @test isnan(cs) || -1 <= cs <= 1
+            parse(Int, c[23]) > 0 && @test isfinite(cs)
         end
         @test isfile(joinpath(dir, "step_2.xyz"))
         @test isfile(joinpath(dir, "step_4.xyz"))
@@ -223,7 +232,7 @@ end
         lines = readlines(joinpath(dir, "log.txt"))
         @test length(lines) == 4
         cols = split(lines[end])
-        @test length(cols) == 21
+        @test length(cols) == 23
         @test isfinite(parse(Float64, cols[18]))
         # shell_rms of the final step is that of the returned frame's
         # last CG exit, up to the %15.8e print precision.
